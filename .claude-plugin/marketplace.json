@@ -1,0 +1,11 @@
+{
+  "name": "tab-board",
+  "owner": { "name": "Michael Harrison" },
+  "plugins": [
+    {
+      "name": "tab-board",
+      "source": "./",
+      "description": "See every Claude tab at once, get a notice when one needs you, and find any tab by what was said in it."
+    }
+  ]
+}

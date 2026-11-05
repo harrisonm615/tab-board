@@ -1,0 +1,6 @@
+{
+  "name": "tab-board",
+  "version": "0.1.0",
+  "description": "See every Claude tab at once: which need you, which are done, which are working. Notifies, jumps to the tab, and finds any tab by what was said in it.",
+  "types": "./types/index.d.ts"
+}
