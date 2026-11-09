@@ -23,7 +23,7 @@ jobs:
           if (-not (Test-Path $code)) { throw 'VS Code did not install' }
           & $code --version
           New-Item -ItemType Directory -Force "$env:APPDATA\Code\User" | Out-Null
-          '{ "security.workspace.trust.enabled": false, "workbench.startupEditor": "none", "update.mode": "none", "telemetry.telemetryLevel": "off", "extensions.ignoreRecommendations": true }' | Set-Content "$env:APPDATA\Code\User\settings.json"
+          '{ "security.workspace.trust.enabled": false, "workbench.startupEditor": "none", "update.mode": "none", "telemetry.telemetryLevel": "off", "extensions.ignoreRecommendations": true, "chat.disableAIFeatures": true, "workbench.welcomePage.walkthroughs.openOnInstall": false }' | Set-Content "$env:APPDATA\Code\User\settings.json"
 
       - name: Add the Claude Code extension
         shell: powershell
@@ -75,8 +75,20 @@ jobs:
           $env:PANEL_REPORT = "$env:RUNNER_TEMP\panel.txt"
           $code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
           Start-Process $code -ArgumentList "--extensionDevelopmentPath=`"$env:GITHUB_WORKSPACE\tests\e2e\open-panel`"", "`"$env:USERPROFILE\Projects\shop portal`""
-          Start-Sleep -Seconds 45
+          Start-Sleep -Seconds 40
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          # VS Code's first-run sign-in box sits over everything on a brand-new install: put it away as a person would, with Esc
+          $window = Get-Process Code -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle } | Select-Object -First 1
+          if ($window) {
+            "Window: $($window.MainWindowTitle)"
+            $shell = New-Object -ComObject WScript.Shell
+            [void]$shell.AppActivate($window.Id)
+            Start-Sleep -Seconds 1
+            [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+            Start-Sleep -Seconds 1
+            [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+          }
+          Start-Sleep -Seconds 15
           $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $shot = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
           [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)

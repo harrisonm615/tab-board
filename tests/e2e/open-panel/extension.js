@@ -12,10 +12,14 @@ exports.activate = async () => {
     note('opened the Tabs & Progress view')
     const own = vscode.extensions.getExtension('hcmnj.progress-sidebar')
     note(`side bar extension: ${own ? `${own.id} ${own.packageJSON.version} active=${own.isActive}` : 'not found'}`)
-    setTimeout(() => {
-      const again = vscode.extensions.getExtension('hcmnj.progress-sidebar')
-      note(`after 15 s: active=${again && again.isActive}`)
-    }, 15_000)
+    // Again a little later, in case a first-run box took the focus
+    for (const wait of [15_000, 45_000]) {
+      setTimeout(async () => {
+        await vscode.commands.executeCommand('workbench.view.extension.hcmnj-progress')
+        const again = vscode.extensions.getExtension('hcmnj.progress-sidebar')
+        note(`after ${wait / 1000} s: active=${again && again.isActive}, view opened again`)
+      }, wait)
+    }
   } catch (error) {
     note(`failed: ${error && error.stack}`)
   }
