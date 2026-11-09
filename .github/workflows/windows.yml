@@ -63,9 +63,9 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force "$env:USERPROFILE\Projects\shop portal" | Out-Null
-          Start-Process node -ArgumentList "`"$env:GITHUB_WORKSPACE\tests\e2e\mock-api.js`"", '8765', "`"$env:RUNNER_TEMP\api.log`"" -WindowStyle Hidden
+          Start-Process node -ArgumentList "`"$env:GITHUB_WORKSPACE\tests\e2e\mock-api.js`"", '48765', "`"$env:RUNNER_TEMP\api.log`"" -WindowStyle Hidden
           Start-Sleep -Seconds 2
-          node "$env:GITHUB_WORKSPACE\tests\e2e\check.js" "$env:SIDEBAR" "$env:CLAUDE" "$env:USERPROFILE\Projects\shop portal" 'http://127.0.0.1:8765'
+          node "$env:GITHUB_WORKSPACE\tests\e2e\check.js" "$env:SIDEBAR" "$env:CLAUDE" "$env:USERPROFILE\Projects\shop portal" 'http://127.0.0.1:48765'
           if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\api.log" -ErrorAction SilentlyContinue; throw 'end-to-end checks failed' }
           Get-ChildItem "$env:USERPROFILE\.claude\projects" | Select-Object Name
 

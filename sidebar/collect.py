@@ -34,6 +34,7 @@ from urllib.parse import quote
 HOME = Path.home()
 IS_WINDOWS = os.name == "nt"
 NO_WINDOW = {"creationflags": 0x08000000} if IS_WINDOWS else {}   # CREATE_NO_WINDOW: a helper started on Windows mustn't flash a console up
+UTF8 = ["-X", "utf8"] if IS_WINDOWS else []   # Windows: UTF-8 files and output in the helpers this starts too. -I ignores PYTHONUTF8, so it's an argument
 TABS = Path(os.environ.get("BAR_TABS") or HOME / ".claude/tab-board")   # each tab's record, written by the tab-board mod
 if IS_WINDOWS:
     WORKSPACES = Path(os.environ.get("APPDATA") or HOME / "AppData/Roaming") / "Code/User/workspaceStorage"
@@ -196,7 +197,7 @@ def personal(args):
     if not JOBS_SCRIPT.exists():
         return {}
     try:
-        out = subprocess.run([sys.executable, "-I", str(JOBS_SCRIPT), *args], capture_output=True, text=True, timeout=60, **NO_WINDOW).stdout
+        out = subprocess.run([sys.executable, *UTF8, "-I", str(JOBS_SCRIPT), *args], capture_output=True, text=True, timeout=60, **NO_WINDOW).stdout
         return json.loads(out) if out.strip() else {}
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}
@@ -738,7 +739,7 @@ def start_triage(rows, store):
     except OSError:
         return                          # FileExistsError included: one is running
     try:
-        run = subprocess.Popen([sys.executable, "-I", str(TRIAGE_SCRIPT)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        run = subprocess.Popen([sys.executable, *UTF8, "-I", str(TRIAGE_SCRIPT)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, start_new_session=True, text=True,
                                **({"creationflags": 0x08000000 | 0x00000200} if IS_WINDOWS else {}))   # no console, and it outlives this one
         run.stdin.write(json.dumps(sorted(rows, key=lambda r: -r["since"])))    # newest first: those are what's on the person's mind

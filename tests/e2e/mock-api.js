@@ -6,6 +6,7 @@ const http = require('http')
 const port = Number(process.argv[2] || 8765)
 const log = process.argv[3]
 const REPLY = 'Hello from the test chat. Everything here is finished.'
+const QUESTION = 'Which color should the shop sign be, red or blue?'
 
 http
   .createServer((req, res) => {
@@ -16,7 +17,7 @@ http
       try {
         ask = JSON.parse(body)
       } catch {}
-      if (log) fs.appendFileSync(log, `${req.method} ${req.url} model=${ask.model || ''} stream=${Boolean(ask.stream)}\n`)
+      if (log) fs.appendFileSync(log, `${req.method} ${req.url} model=${ask.model || ''} stream=${Boolean(ask.stream)} sorter=${JSON.stringify(ask.system || '').includes('busy person')}\n`)
       const json = (code, value) => {
         res.writeHead(code, { 'content-type': 'application/json' })
         res.end(JSON.stringify(value))
@@ -24,7 +25,13 @@ http
       if (req.url.startsWith('/v1/messages/count_tokens')) return json(200, { input_tokens: 10 })
       if (!req.url.startsWith('/v1/messages')) return json(200, {})
       const isJudge = JSON.stringify(ask.messages || '').includes('<message>')
-      const text = isJudge ? 'done' : REPLY
+      // The side bar's sorter asks about every tab at once and wants a JSON list back, one answer per tab id it named
+      const isSorter = JSON.stringify(ask.system || '').includes('busy person')
+      const ids = [...new Set([...body.matchAll(/tab id=\\*"([0-9a-f-]{36})/g)].map(m => m[1]))]
+      const verdicts = ids.map(id => ({ id, who: 'nobody', ask: '', due: null, size: 'quick', stakes: 1, why: 'Test verdict', close: true, close_why: 'It says it is finished' }))
+      // A chat asked to ask something ends on a question, which the plugin's judge reads as waiting on the person
+      const asks = /Ask me a question/.test(JSON.stringify(ask.messages || ''))
+      const text = isSorter ? JSON.stringify(verdicts) : isJudge ? (asks ? 'waiting' : 'done') : asks ? QUESTION : REPLY
       const message = {
         id: 'msg_test',
         type: 'message',

@@ -37,10 +37,11 @@ function windowsPython() {
   return ['python']
 }
 
-// The Python to run the helpers with, as [program, ...arguments that come first].
-const [PYTHON, ...PYTHON_ARGS] = IS_WINDOWS ? windowsPython() : [['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'].find(fs.existsSync) || 'python3']
-// On Windows: no console window flashing up every few seconds, and UTF-8 for the chats' words instead of the old code page, for every helper this starts.
-const QUIET = IS_WINDOWS ? { windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } } : {}
+// The Python to run the helpers with, as [program, ...arguments that come first]. On Windows, -X utf8 reads and writes the chats' words as UTF-8
+// instead of the old code page. It has to be an argument: -I, which every helper runs under, ignores the PYTHONUTF8 setting.
+const [PYTHON, ...PYTHON_ARGS] = IS_WINDOWS ? [...windowsPython(), '-X', 'utf8'] : [['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'].find(fs.existsSync) || 'python3']
+// On Windows: no console window flashing up every few seconds.
+const QUIET = IS_WINDOWS ? { windowsHide: true } : {}
 const COLLECT = path.join(__dirname, 'collect.py')
 
 const collect = args =>

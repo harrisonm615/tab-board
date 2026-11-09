@@ -30,7 +30,7 @@ Neither asks for a password, and neither needs admin rights. To read them first,
 - VS Code with an up-to-date Claude Code extension.
 - Python. If your Mac doesn't have it, the installer opens Apple's box for the free developer tools; press Install. If your PC doesn't have it, the installer gets python.org's own copy (about 25 MB), checks it's signed by the Python Software Foundation, and puts it in your own Programs folder, just for you.
 
-On Windows, three things are Mac-only for now: pop-up notices (the list still shows what needs you), the meters for the GPU and the network (CPU, memory and the C: drive show), and the warning about which chats a reload would stop.
+On Windows, a few things are Mac-only for now: pop-up notices (the list still shows what needs you), the meters for the GPU and the network (CPU, memory and the C: drive show), the warning about which chats a reload would stop, and the suggestions of chats that look safe to close, since those need to see what each chat is running.
 
 ## Updates
 
