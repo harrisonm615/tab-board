@@ -84,7 +84,7 @@ def claude_path():
     if found:
         return found
     # VS Code's Claude extension carries its own copy; the newest install is the one in use.
-    copies = glob.glob(str(HOME / ".vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude"))
+    copies = glob.glob(str(HOME / ".vscode/extensions/anthropic.claude-code-*/resources/native-binary" / ("claude.exe" if os.name == "nt" else "claude")))
     return max(copies, key=os.path.getmtime) if copies else None
 
 
@@ -137,7 +137,7 @@ def clip_line(text, limit):
 
 def describe(tab):
     asked, reply = last_words(tab["id"])
-    wrote = datetime.fromtimestamp(tab["since"] / 1000).strftime("%a %b %-d, %-I:%M %p") if tab.get("since") else "unknown"
+    wrote = datetime.fromtimestamp(tab["since"] / 1000).strftime("%a %b %#d, %#I:%M %p" if os.name == "nt" else "%a %b %-d, %-I:%M %p") if tab.get("since") else "unknown"
     return (f'<tab id="{tab["id"]}">\nName: {tab.get("title", "")}\nClaude last wrote: {wrote}\nShort note: {tab.get("note", "")}\n'
             f"The person last asked:\n{clip(asked, 900, 300)}\nClaude's last message:\n{clip(reply or tab.get('note', ''), 400, 1800)}\n</tab>")
 
@@ -176,7 +176,7 @@ def ask_model(tabs):
     claude = claude_path()
     if not claude:
         raise RuntimeError("Claude Code isn't installed")
-    now = datetime.now().strftime("%A %B %-d %Y, %-I:%M %p")
+    now = datetime.now().strftime("%A %B %#d %Y, %#I:%M %p" if os.name == "nt" else "%A %B %-d %Y, %-I:%M %p")   # Windows spells "no leading zero" with #
     texts = {tab["id"]: describe(tab) for tab in tabs}
     prompt = f"It is now {now}.\n\n" + "\n\n".join(texts.values())
     # A bare call: no settings, plugins, tools or saved session, so it can't touch anything or show up as a tab.
@@ -184,7 +184,8 @@ def ask_model(tabs):
     done = subprocess.run(
         [claude, "-p", "--model", "haiku", "--setting-sources", "", "--strict-mcp-config", "--tools", "", "--disable-slash-commands",
          "--no-session-persistence", "--system-prompt", PROMPT, "--output-format", "json"],
-        input=prompt, capture_output=True, text=True, timeout=150, env=env, cwd=tempfile.gettempdir())
+        input=prompt, capture_output=True, text=True, timeout=150, env=env, cwd=tempfile.gettempdir(),
+        **({"creationflags": 0x08000000} if os.name == "nt" else {}))   # no console window on Windows
     result = json.loads(done.stdout).get("result") or ""
     answers = [a for a in json.loads(re.search(r"\[.*\]", result, re.S).group(0)) if isinstance(a, dict)]
     for answer in answers:

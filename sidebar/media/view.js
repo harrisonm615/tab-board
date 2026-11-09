@@ -1050,17 +1050,24 @@ function drawGauges() {
   lowerBox.replaceChildren()
   if (!gauges) return
   const grid = el('div', 'gauge-grid')
-  grid.append(gaugeCell('CPU', percentWords(gauges.cpu), gauges.cpu, busyTone(gauges.cpu), `CPU: ${known(gauges.cpu) ? `${Math.round(gauges.cpu)}% of everything the Mac has` : 'reading…'}.\nSystem load ${gauges.load}. Heavy jobs start taking turns over 70, and the Mac counts as overloaded over 100.\nOrange from 70%, red from 90%.`))
+  const isWindows = gauges.os === 'windows'
+  const cpuTip = isWindows
+    ? `CPU: ${known(gauges.cpu) ? `${Math.round(gauges.cpu)}% of everything the PC has` : 'reading…'}.\nOrange from 70%, red from 90%.`
+    : `CPU: ${known(gauges.cpu) ? `${Math.round(gauges.cpu)}% of everything the Mac has` : 'reading…'}.\nSystem load ${gauges.load}. Heavy jobs start taking turns over 70, and the Mac counts as overloaded over 100.\nOrange from 70%, red from 90%.`
+  grid.append(gaugeCell('CPU', percentWords(gauges.cpu), gauges.cpu, busyTone(gauges.cpu), cpuTip))
   if (known(gauges.gpu)) grid.append(gaugeCell('GPU', percentWords(gauges.gpu), gauges.gpu, busyTone(gauges.gpu), `GPU: ${gauges.gpu}% busy. Hardware video encoding runs on its own chip and mostly doesn't show here, so a render can be going with this low.\nOrange from 70%, red from 90%.`))
   const memory = gauges.memory
   if (memory) {
     const tone = { warning: 'warn', critical: 'bad' }[memory.pressure] || 'ok'
-    grid.append(gaugeCell('Memory', percentWords(memory.percent), memory.percent, tone, `Memory: ${memory.usedGB.toFixed(1)} of ${Math.round(memory.totalGB)} GB in use. macOS says pressure is ${memory.pressure}, and that's what the color follows: a Mac using most of its memory is normal.`))
+    const memoryTip = isWindows
+      ? `Memory: ${memory.usedGB.toFixed(1)} of ${Math.round(memory.totalGB)} GB in use. Orange from 85%, red from 95%.`
+      : `Memory: ${memory.usedGB.toFixed(1)} of ${Math.round(memory.totalGB)} GB in use. macOS says pressure is ${memory.pressure}, and that's what the color follows: a Mac using most of its memory is normal.`
+    grid.append(gaugeCell('Memory', percentWords(memory.percent), memory.percent, tone, memoryTip))
   }
   gaugeBox.append(grid)
   // Open apps sits between these two boxes (his order, Nov 5): meters, apps, storage, Wi-Fi last.
   if (gauges.disks && gauges.disks.length > 0) lowerBox.append(diskGrid())
-  lowerBox.append(netTable())
+  if (gauges.link) lowerBox.append(netTable()) // Windows has no network line
 }
 
 function draw() {

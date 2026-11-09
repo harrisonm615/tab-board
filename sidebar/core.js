@@ -16,12 +16,36 @@ const { FINISHED_HOURS, pruneFinished } = require('./prune')
 const { leaveNote, takeBack, wasTaken } = require('./ship')
 const { Gauges, speedTest } = require('./gauges')
 
-const PYTHON = ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'].find(fs.existsSync) || 'python3'
+const IS_WINDOWS = process.platform === 'win32'
+
+// Windows has no Python of its own. The installer puts python.org's in the person's own Programs folder, which comes first here;
+// the py launcher is the fallback. A "python" on the PATH isn't trusted, since on Windows that's often a stand-in that opens the Store.
+function windowsPython() {
+  const newest = root => {
+    try {
+      const found = fs.readdirSync(root).filter(name => /^Python3\d+/i.test(name)).map(name => path.join(root, name, 'python.exe')).filter(fs.existsSync)
+      return found.sort((a, b) => Number(/Python3(\d+)/i.exec(b)[1]) - Number(/Python3(\d+)/i.exec(a)[1]))[0]
+    } catch {
+      return undefined
+    }
+  }
+  const local = process.env.LOCALAPPDATA && newest(path.join(process.env.LOCALAPPDATA, 'Programs', 'Python'))
+  const shared = process.env.ProgramFiles && newest(process.env.ProgramFiles)
+  const launcher = path.join(process.env.SystemRoot || 'C:\\Windows', 'py.exe')
+  if (local || shared) return [local || shared]
+  if (fs.existsSync(launcher)) return [launcher, '-3']
+  return ['python']
+}
+
+// The Python to run the helpers with, as [program, ...arguments that come first].
+const [PYTHON, ...PYTHON_ARGS] = IS_WINDOWS ? windowsPython() : [['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'].find(fs.existsSync) || 'python3']
+// On Windows: no console window flashing up every few seconds, and UTF-8 for the chats' words instead of the old code page, for every helper this starts.
+const QUIET = IS_WINDOWS ? { windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } } : {}
 const COLLECT = path.join(__dirname, 'collect.py')
 
 const collect = args =>
   new Promise(resolve => {
-    execFile(PYTHON, ['-I', COLLECT, ...args], { maxBuffer: 32 * 1024 * 1024, timeout: 120_000 }, (error, stdout) => {
+    execFile(PYTHON, [...PYTHON_ARGS, '-I', COLLECT, ...args], { maxBuffer: 32 * 1024 * 1024, timeout: 120_000, ...QUIET }, (error, stdout) => {
       if (error) return resolve(undefined)
       try {
         resolve(JSON.parse(stdout))
@@ -33,7 +57,7 @@ const collect = args =>
 
 const readUsage = () =>
   new Promise(resolve => {
-    execFile(PYTHON, ['-I', path.join(__dirname, 'usage.py')], { timeout: 60_000 }, (error, stdout) => {
+    execFile(PYTHON, [...PYTHON_ARGS, '-I', path.join(__dirname, 'usage.py')], { timeout: 60_000, ...QUIET }, (error, stdout) => {
       try {
         resolve(error ? undefined : JSON.parse(stdout))
       } catch {
@@ -197,10 +221,10 @@ const updatePlugin = () =>
     const root = path.join(os.homedir(), '.vscode/extensions')
     let copies = []
     try {
-      copies = fs.readdirSync(root).filter(name => name.startsWith('anthropic.claude-code-')).map(name => path.join(root, name, 'resources/native-binary/claude')).filter(fs.existsSync)
+      copies = fs.readdirSync(root).filter(name => name.startsWith('anthropic.claude-code-')).map(name => path.join(root, name, 'resources', 'native-binary', IS_WINDOWS ? 'claude.exe' : 'claude')).filter(fs.existsSync)
     } catch {}
     copies.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
-    execFile(copies[0] || 'claude', ['plugin', 'update', 'tab-board@tab-board'], { timeout: 120_000, cwd: os.homedir() }, () => resolve())
+    execFile(copies[0] || 'claude', ['plugin', 'update', 'tab-board@tab-board'], { timeout: 120_000, cwd: os.homedir(), ...QUIET }, () => resolve())
   })
 
 const KEEP_RESULT_MS = 7 * 86_400_000
@@ -710,4 +734,4 @@ function start({ vscode: api, context, folder, loaderFolder }) {
   }
 }
 
-module.exports = { start, use, isNewer, parseDay, Provider, runVisibly, runInTerminal, stopsFor, shapeOf }
+module.exports = { start, use, isNewer, parseDay, Provider, runVisibly, runInTerminal, stopsFor, shapeOf, PYTHON, PYTHON_ARGS, collect }

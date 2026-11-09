@@ -27,13 +27,16 @@ type World = {
   edits?: Record<string, Record<string, number>>
   editTimes?: Record<string, number>
   logged?: string[]
+  paths?: string[]
 }
 
 const line = (row: object) => JSON.stringify(row)
 
-const engine = (on: On, world: World) => {
+const baseOf = (path: string) => path.slice(path.lastIndexOf('/') + 1)
+
+const engine = (on: On, world: World, env: Record<string, string> = { HOME: '/home/test' }) => {
   const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME: '/home/test' })
+  mock.env(on, env)
   on('session.id', () => ({ value: 'a' }))
   on('session.cwd', () => ({ value: '/x/work' }))
   on('command.register', () => ({ value: { command: 'tabs' } }))
@@ -43,17 +46,18 @@ const engine = (on: On, world: World) => {
       ;(world.logged ??= []).push(e.text)
       return { value: undefined }
     }
-    const name = e.path.slice(DIR.length + 1)
+    ;(world.paths ??= []).push(e.path)
+    const name = baseOf(e.path)
     ;(world.wrote[name] ??= []).push(e.text)
     return { value: undefined }
   })
-  on('fs.exists', ($, e) => ({ value: world.note !== undefined && e.path === '/home/test/.claude/tab-triage/send/a.json' }))
+  on('fs.exists', ($, e) => ({ value: (world.note !== undefined && e.path.endsWith('/.claude/tab-triage/send/a.json')) || e.path.endsWith('/Python312/python.exe') }))
   on('prompt.submit', ($, e) => {
     world.sent.push({ text: e.text, ...(e.origin.kind === 'plugin' && e.origin.asUser ? { asUser: true as const } : {}) })
     return { text: e.text }
   })
   on('fs.list', ($, e) => ({
-    value: (e.path.endsWith('/.vscode/extensions') ? (world.hasSideBar ? ['hcmnj.progress-sidebar-0.1.0'] : ['some.other-1.0.0']) : e.path.endsWith('/tab-edits') ? Object.keys(world.edits ?? {}) : Object.keys(world.records)).map(name => ({
+    value: (e.path.endsWith('/.vscode/extensions') ? (world.hasSideBar ? ['hcmnj.progress-sidebar-0.1.0'] : ['some.other-1.0.0']) : e.path.endsWith('/tab-edits') ? Object.keys(world.edits ?? {}) : e.path.endsWith('/Programs/Python') ? ['Python39', 'Python312', 'Python311'] : Object.keys(world.records)).map(name => ({
       name,
       kind: 'file' as const,
       size: 100,
@@ -68,7 +72,7 @@ const engine = (on: On, world: World) => {
       if (theirs === undefined) throw new Error('ENOENT')
       return { value: typeof theirs === 'string' ? theirs : JSON.stringify(theirs) }
     }
-    const record = world.records[e.path.slice(DIR.length + 1)]
+    const record = world.records[baseOf(e.path)]
     if (record === undefined) throw new Error('ENOENT')
     return { value: JSON.stringify(record) }
   })
@@ -81,7 +85,10 @@ const engine = (on: On, world: World) => {
       '/bin/sh': world.openTabs,
       python3: world.found,
     }
-    const stdout = answers[e.argv[0] ?? ''] ?? ''
+    // Windows: the same jobs as Python scripts, told apart by what they do
+    const script = e.argv.find(arg => arg.includes('import ')) ?? ''
+    const byScript = script.includes('state.vscdb') ? world.openTabs : script.includes('re.compile') ? answers.grep : script.includes('f.seek(0, 2)') ? world.transcript : script.includes('glob.escape') ? '' : script.includes('wanted') ? world.found : undefined
+    const stdout = byScript ?? answers[e.argv[0] ?? ''] ?? ''
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('model.complete', ($, e) => {
@@ -597,4 +604,27 @@ test('other tools pass through with nothing written', async ($, on) => {
   const ran = await $.tool.call({ tool: 'Read', file_path: EDITED })
   expect(notes(ran).length).toBe(0)
   expect(w.logged ?? []).toEqual([])
+})
+
+test('on Windows the Unix tools are Python, the records land in the home folder, and a jump opens through Explorer', async ($, on) => {
+  const w = world({ transcript: line({ type: 'user', cwd: 'C:\\x\\work', timestamp: new Date(NOW - 5_000).toISOString(), message: { content: 'hello' } }) })
+  engine(on, w, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\test', LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local', SystemRoot: 'C:\\Windows' })
+  await $.session.start({ cwd: 'C:\\x\\work', surface: 'vscode', isInteractive: true })
+
+  // A Mac reads C:/ as a relative path, so only the end is checked here; the Windows run checks the real place
+  expect(w.paths?.some(path => path.endsWith('C:/Users/test/.claude/tab-board/a.json'))).toBe(true)
+  expect(last(w).title).toBe('Tab board for VS Code') // the title came through the Python stand-in for grep
+  const unix = ['tail', 'grep', 'find', 'rm', 'open', '/bin/sh', 'osascript', 'python3']
+  expect(w.ran.filter(argv => unix.includes(argv[0] ?? ''))).toEqual([])
+  const pythons = w.ran.filter(argv => (argv[0] ?? '').endsWith('python.exe'))
+  expect(pythons.length).toBeGreaterThan(0)
+  for (const argv of pythons) {
+    expect(argv[0]).toBe('C:\\Users\\test\\AppData\\Local/Programs/Python/Python312/python.exe') // the newest of the three
+    expect(argv.slice(1, 4)).toEqual(['-X', 'utf8', '-I'])
+  }
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'vscode' })
+  await ui.press({ key: 'go-b' })
+  expect(w.ran.at(-1)).toEqual(['explorer.exe', 'vscode://anthropic.claude-code/open?session=b'])
+  await ui.unmount()
 })

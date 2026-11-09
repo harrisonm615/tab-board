@@ -28,7 +28,7 @@ def claude_path():
     if found:
         return found
     # VS Code's Claude extension carries its own copy; the newest install is the one in use.
-    copies = glob.glob(str(HOME / ".vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude"))
+    copies = glob.glob(str(HOME / ".vscode/extensions/anthropic.claude-code-*/resources/native-binary" / ("claude.exe" if os.name == "nt" else "claude")))
     return max(copies, key=os.path.getmtime) if copies else None
 
 
@@ -43,14 +43,18 @@ def ask_claude():
         process = subprocess.Popen(
             [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--model", "haiku",
              "--setting-sources", "", "--strict-mcp-config", "--tools", "", "--disable-slash-commands", "--no-session-persistence"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=str(HOME), text=True, start_new_session=True)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=str(HOME), text=True, start_new_session=True,
+            **({"creationflags": 0x08000000} if os.name == "nt" else {}))   # no console window on Windows
     except OSError:
         return None
 
     def stop():   # the whole group: anything it started would hold the pipe open and keep this waiting
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except OSError:
+            if os.name == "nt":   # no process groups on Windows: taskkill /T takes the whole tree
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=10, creationflags=0x08000000)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, subprocess.SubprocessError):
             pass
 
     timer = threading.Timer(WAIT_S, stop)

@@ -166,6 +166,97 @@ const crossTold = new Map<string, { at: number; edit: number }>() // other chat 
 let notified = ''
 let shown = ''
 let writes: Promise<unknown> = Promise.resolve()
+// Windows has no grep, tail, find, rm or open, and no /bin/sh, so there the same jobs go through Python, which the side bar's installer puts in.
+let isWindows = false
+let python: string[] = ['python3'] // the program, then any arguments that come first
+
+const WIN_TAIL = String.raw`import sys
+f = open(sys.argv[1], 'rb')
+f.seek(0, 2)
+f.seek(max(0, f.tell() - int(sys.argv[2])))
+sys.stdout.buffer.write(f.read())`
+const WIN_GREP = String.raw`import re, sys
+pattern = re.compile(sys.argv[1].encode())
+with open(sys.argv[2], 'rb') as f:
+    for line in f:
+        if pattern.search(line):
+            sys.stdout.buffer.write(line)`
+const WIN_FIND = String.raw`import glob, os, sys
+hits = glob.glob(os.path.join(glob.escape(sys.argv[1]), '*', glob.escape(sys.argv[2])))
+sys.stdout.buffer.write('
+'.join(hit.replace(os.sep, '/') for hit in hits).encode())`
+const WIN_RM = String.raw`import os, sys
+failed = 0
+for path in sys.argv[2:]:
+    try:
+        os.remove(path)
+    except OSError:
+        failed = 1
+sys.exit(failed if sys.argv[1] == 'strict' else 0)`
+const WIN_OPEN_TABS = String.raw`import glob, os, sqlite3, sys, time
+from pathlib import Path
+for db in glob.glob(os.path.join(glob.escape(sys.argv[1]), '*', 'state.vscdb')):
+    try:
+        if time.time() - os.path.getmtime(db) > 2 * 86400:
+            continue
+        con = sqlite3.connect(Path(db).as_uri() + '?mode=ro', uri=True, timeout=1)
+        try:
+            hit = con.execute("select value from ItemTable where key='Anthropic.claude-code'").fetchone()
+        finally:
+            con.close()
+        if hit:
+            value = hit[0] if isinstance(hit[0], str) else bytes(hit[0]).decode('utf-8', 'replace')
+            sys.stdout.buffer.write(value.encode() + b'
+')
+    except Exception:
+        pass`
+
+const runPython = ($: Engine, script: string, args: readonly string[]) => $.process.run([...python, '-X', 'utf8', '-I', '-c', script, ...args])
+
+// Windows' own Python is whichever the installer put in the person's Programs folder; the py launcher is the fallback.
+// A bare "python" on the PATH is often a stand-in that opens the Store, so it comes last.
+const findWindowsPython = async ($: Engine): Promise<string[]> => {
+  const newest = async (root: string | undefined) => {
+    if (root === undefined || root === '') return undefined
+    const names = (await $.fs.list(root).catch(() => []))
+      .map(entry => entry.name)
+      .filter(name => /^Python3\d+/i.test(name))
+      .sort((a, b) => Number(/^Python3(\d+)/i.exec(b)?.[1] ?? 0) - Number(/^Python3(\d+)/i.exec(a)?.[1] ?? 0))
+    for (const name of names) if (await $.fs.exists(`${root}/${name}/python.exe`)) return `${root}/${name}/python.exe`
+    return undefined
+  }
+  const localAppData = await $.env.get('LOCALAPPDATA')
+  const programFiles = await $.env.get('ProgramFiles')
+  const own = (await newest(localAppData && `${localAppData}/Programs/Python`)) ?? (await newest(programFiles))
+  if (own !== undefined) return [own]
+  const launcher = `${(await $.env.get('SystemRoot')) ?? 'C:/Windows'}/py.exe`
+  if (await $.fs.exists(launcher)) return [launcher, '-3']
+  return ['python']
+}
+
+const tailOf = ($: Engine, path: string, bytes: number) =>
+  isWindows ? runPython($, WIN_TAIL, [path, String(bytes)]) : $.process.run(['tail', '-c', String(bytes), path])
+
+const linesMatching = ($: Engine, pattern: string, path: string) =>
+  isWindows ? runPython($, WIN_GREP, [pattern, path]) : $.process.run(['grep', '-E', pattern, path])
+
+const findTranscript = ($: Engine, id: string) =>
+  isWindows
+    ? runPython($, WIN_FIND, [`${home}/.claude/projects`, `${id}.jsonl`])
+    : $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '2', '-name', `${id}.jsonl`])
+
+// strict: fails unless every file was there to remove, so two chats can't both take the same one.
+const removeFiles = async ($: Engine, paths: readonly string[], strict: boolean) => {
+  if (!isWindows) return $.process.run(strict ? ['rm', ...paths] : ['rm', '-f', ...paths])
+  let last = { exitCode: 0, stdout: '', stderr: '' } as Awaited<ReturnType<Engine['process']['run']>>
+  for (let i = 0; i < paths.length; i += 100) {
+    last = await runPython($, WIN_RM, [strict ? 'strict' : 'loose', ...paths.slice(i, i + 100)]) // a Windows command line holds about 32,000 characters
+    if (strict && last.exitCode !== 0) return last
+  }
+  return last
+}
+
+const openUrl = ($: Engine, url: string) => $.process.run(isWindows ? ['explorer.exe', url] : ['open', url])
 
 const clip = (text: string, n: number) => {
   const one = text.replace(/\s+/g, ' ').trim()
@@ -178,7 +269,7 @@ const firstLine = (text: string) =>
     .map(line => line.replace(/^[#>*\-\s]+/, '').replace(/[*`]/g, '').trim())
     .find(line => line !== '') ?? ''
 
-const baseName = (path: string) => path.split('/').filter(Boolean).pop() ?? path
+const baseName = (path: string) => path.split(isWindows ? /[\\/]/ : '/').filter(Boolean).pop() ?? path
 
 const serverName = (name: string) => {
   const plain = name.replace(/^claude_ai_/, '').replace(/^claude-in-/, '').replace(/[_-]+/g, ' ')
@@ -270,7 +361,7 @@ const save = ($: Engine, patch: Partial<TabRecord>, onlyIf?: (record: TabRecord)
 // The name the VS Code tab shows: the one you gave it, else the one Claude made.
 const titleOf = async ($: Engine, path: string) => {
   try {
-    const { stdout } = await $.process.run(['grep', '-E', '"type":"(custom-title|ai-title)"', path])
+    const { stdout } = await linesMatching($, '"type":"(custom-title|ai-title)"', path)
     let custom = ''
     let made = ''
     for (const line of stdout.split('\n')) {
@@ -309,7 +400,7 @@ type Block = { type?: string; text?: unknown }
 const snapshot = async ($: Engine, path: string): Promise<Snapshot> => {
   const empty: Snapshot = { cwd: '', reply: '', asked: '', at: 0, ending: 'empty' }
   let found: Snapshot | undefined
-  const { stdout } = await $.process.run(['tail', '-c', '1500000', path]).catch(() => ({ stdout: '' }))
+  const { stdout } = await tailOf($, path, 1_500_000).catch(() => ({ stdout: '' }))
   const lines = stdout.split('\n')
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     let row: Row
@@ -425,7 +516,10 @@ const readOpenTabs = async ($: Engine): Promise<Map<string, string> | undefined>
     'sqlite3 -readonly "$f" "select value from ItemTable where key=\'Anthropic.claude-code\'" 2>/dev/null; ' +
     'done; true'
   try {
-    const { stdout } = await $.process.run(['/bin/sh', '-c', script, 'sh', `${home}/${WORKSPACES}`])
+    const appData = isWindows ? ((await $.env.get('APPDATA')) ?? `${home}/AppData/Roaming`).replace(/\\/g, '/') : ''
+    const { stdout } = isWindows
+      ? await runPython($, WIN_OPEN_TABS, [`${appData}/Code/User/workspaceStorage`])
+      : await $.process.run(['/bin/sh', '-c', script, 'sh', `${home}/${WORKSPACES}`])
     const tabs = new Map<string, string>()
     for (const line of stdout.split('\n')) {
       try {
@@ -452,7 +546,7 @@ const backfill = async ($: Engine, missing: string[]) => {
   isBackfilling = true
   checked.add(id)
   try {
-    const { stdout } = await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '2', '-name', `${id}.jsonl`])
+    const { stdout } = await findTranscript($, id)
     const path = stdout.split('\n')[0] ?? ''
     const shot = path === '' ? undefined : await snapshot($, path)
     const prior = await readJson<TabRecord>($, `${dir}/${id}.json`)
@@ -566,7 +660,7 @@ const markSeen = async ($: Engine, row: TabRow) => {
 const sessionUrl = (id: string) => `vscode://anthropic.claude-code/open?session=${id}`
 
 const jump = async ($: Engine, row: TabRow) => {
-  if (!row.isMine) await $.process.run(['open', sessionUrl(row.id)])
+  if (!row.isMine) await openUrl($, sessionUrl(row.id))
 }
 
 const clear = async ($: Engine, row: TabRow) => {
@@ -597,15 +691,15 @@ const runSearch = async ($: Engine, typed: string) => {
     if (openTabs === undefined) openTabs = await readOpenTabs($)
     const board = await read($, rows)
     const open = new Set([...(openTabs?.keys() ?? []), ...board.map(row => row.id)])
-    let python = 'python3'
-    for (const path of PYTHONS) {
+    let program = isWindows ? [...python, '-X', 'utf8'] : ['python3']
+    for (const path of isWindows ? [] : PYTHONS) {
       if (await $.fs.exists(path)) {
-        python = path
+        program = [path]
         break
       }
     }
     const { stdout, stderr, exitCode } = await $.process.run([
-      python, '-I', '-c', SEARCH_PY,
+      ...program, '-I', '-c', SEARCH_PY,
       query, String(SEARCH_DAYS), `${home}/.claude/projects`, [...open].join(','),
     ])
     if (exitCode !== 0) throw new Error(firstLine(stderr.split('\n').filter(Boolean).pop() ?? '') || `python3 stopped (${exitCode})`)
@@ -632,14 +726,14 @@ const runSearch = async ($: Engine, typed: string) => {
 }
 
 const openHit = async ($: Engine, hit: SearchHit) => {
-  if (!hit.isMine) await $.process.run(['open', sessionUrl(hit.id)])
+  if (!hit.isMine) await openUrl($, sessionUrl(hit.id))
 }
 
 const mentions = (hit: SearchHit) => (hit.hits === 0 ? 'in its name' : `said ${hit.hits === 1 ? 'once' : `${hit.hits} times`}`)
 
 // A macOS notification; clicking it jumps to the tab.
 const notify = async ($: Engine, heading: string, message: string) => {
-  if (me === undefined) return
+  if (me === undefined || isWindows) return // no notices on Windows yet: the side bar still shows it
   const key = `${me.id}:${me.state}:${me.since}`
   if (key === notified) return
   notified = key
@@ -746,7 +840,7 @@ const sweep = async ($: Engine) => {
   const oldEdits = (await $.fs.list(edits).catch(() => []))
     .filter(entry => entry.kind === 'file' && now - entry.mtimeMs > CROSS_SWEEP_MS)
     .map(entry => `${edits}/${entry.name}`)
-  if (old.length + oldEdits.length > 0) await $.process.run(['rm', '-f', ...old, ...oldEdits])
+  if (old.length + oldEdits.length > 0) await removeFiles($, [...old, ...oldEdits], false)
 }
 
 const minutesAgo = (ms: number) => {
@@ -798,14 +892,17 @@ const checkNote = async ($: Engine) => {
   const isWaiting = me.state === 'step' || me.state === 'finished' || me.state === 'idle'
   const isCurrent = note.kind === 'test' || (note.since === me.since && isWaiting)
   if (!isOld && (text === undefined || !isCurrent)) return
-  const { exitCode } = await $.process.run(['rm', path]) // whoever removes it owns it, so it can only go once
+  const { exitCode } = await removeFiles($, [path], true) // whoever removes it owns it, so it can only go once
   if (exitCode === 0 && !isOld && text !== undefined) await $.prompt.submit({ text, asUser: true })
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
-      home = (await $.env.get('HOME')) ?? ''
+      isWindows = (await $.env.get('OS')) === 'Windows_NT'
+      // Windows keeps the home folder in USERPROFILE; HOME there is often unset, or a Git Bash path.
+      home = isWindows ? ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '').replace(/\\/g, '/') : ((await $.env.get('HOME')) ?? '')
+      if (isWindows) python = await findWindowsPython($)
       myEdits = {}
       crossTold.clear()
       dir = `${home}/.claude/tab-board`

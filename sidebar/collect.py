@@ -32,8 +32,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 HOME = Path.home()
+IS_WINDOWS = os.name == "nt"
+NO_WINDOW = {"creationflags": 0x08000000} if IS_WINDOWS else {}   # CREATE_NO_WINDOW: a helper started on Windows mustn't flash a console up
 TABS = Path(os.environ.get("BAR_TABS") or HOME / ".claude/tab-board")   # each tab's record, written by the tab-board mod
-WORKSPACES = HOME / "Library/Application Support/Code/User/workspaceStorage"
+if IS_WINDOWS:
+    WORKSPACES = Path(os.environ.get("APPDATA") or HOME / "AppData/Roaming") / "Code/User/workspaceStorage"
+else:
+    WORKSPACES = HOME / "Library/Application Support/Code/User/workspaceStorage"
 PROGRESS = HOME / ".claude/progress"
 JOBS_SCRIPT = PROGRESS / "jobs.py"
 LATER = Path(os.environ.get("BAR_LATER") or HOME / ".claude/for-later.json")   # the shelf. Not in TABS: the mod takes every file there for a tab and sweeps old ones
@@ -44,7 +49,7 @@ STALE_MINUTES = 30     # a running card untouched this long probably stopped wit
 
 
 # ---------- Which chat a job card belongs to: the one that last wrote it, going by the chats' own tool calls ----------
-CARD_PATH = re.compile(r"\.claude/progress/([\w.-]+)\.json")
+CARD_PATH = re.compile(r"\.claude[/\\]+progress[/\\]+([\w.-]+)\.json")   # either slash: Windows paths have backslashes
 CHAT_SCAN_SECONDS = 8                  # the first look reads over a GB of chats. Whatever's left waits for the next look
 CHAT_KEEP_DAYS = 30                    # Claude Code deletes a chat after about this long, so the link would go nowhere
 
@@ -191,13 +196,15 @@ def personal(args):
     if not JOBS_SCRIPT.exists():
         return {}
     try:
-        out = subprocess.run([sys.executable, "-I", str(JOBS_SCRIPT), *args], capture_output=True, text=True, timeout=60).stdout
+        out = subprocess.run([sys.executable, "-I", str(JOBS_SCRIPT), *args], capture_output=True, text=True, timeout=60, **NO_WINDOW).stdout
         return json.loads(out) if out.strip() else {}
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}
 
 
 def mac():
+    if not hasattr(os, "getloadavg"):   # Windows has no load average. Its meters show CPU instead
+        return {"warn": False, "load": 0, "detail": ""}
     load = round(os.getloadavg()[0])
     if load > 100:
         return {"warn": True, "load": load, "detail": f"System load is {load}, which is very high."}
@@ -222,7 +229,8 @@ def open_tabs():
         try:
             if time.time() - os.path.getmtime(db) > 2 * 86400:
                 continue
-            con = sqlite3.connect(f"file:{quote(db)}?mode=ro", uri=True, timeout=1)
+            uri = f"{Path(db).as_uri()}?mode=ro" if IS_WINDOWS else f"file:{quote(db)}?mode=ro"   # file:///C:/... on Windows
+            con = sqlite3.connect(uri, uri=True, timeout=1)
             try:
                 hit = con.execute("select value from ItemTable where key='Anthropic.claude-code'").fetchone()
             finally:
@@ -650,7 +658,7 @@ def due_text(due, now):
         return f"{age(now - due)} overdue"
     if day_only:
         return "by today" if days == 0 else "by tomorrow" if days == 1 else f"by {when:%a}" if days < 7 else f"by {when:%b} {when.day}"
-    hour = when.strftime("%-I%p" if when.minute == 0 else "%-I:%M%p").lower()
+    hour = when.strftime(("%-I%p" if when.minute == 0 else "%-I:%M%p").replace("%-", "%#" if IS_WINDOWS else "%-")).lower()   # Windows: %#I
     if days == 0:
         return f"by {hour} today"
     if days == 1:
@@ -731,7 +739,8 @@ def start_triage(rows, store):
         return                          # FileExistsError included: one is running
     try:
         run = subprocess.Popen([sys.executable, "-I", str(TRIAGE_SCRIPT)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, start_new_session=True, text=True)
+                               stderr=subprocess.DEVNULL, start_new_session=True, text=True,
+                               **({"creationflags": 0x08000000 | 0x00000200} if IS_WINDOWS else {}))   # no console, and it outlives this one
         run.stdin.write(json.dumps(sorted(rows, key=lambda r: -r["since"])))    # newest first: those are what's on the person's mind
         run.stdin.close()
     except OSError:
@@ -739,7 +748,9 @@ def start_triage(rows, store):
 
 
 def ping(row, heading):
-    """A macOS notice that opens the tab when clicked."""
+    """A macOS notice that opens the tab when clicked. None on Windows yet: the tile is still there."""
+    if IS_WINDOWS:
+        return
     body = f"​{row['note']}"[:180]     # the blank first character stops text starting with "-" being read as an option
     url = f"vscode://anthropic.claude-code/open?session={row['id']}"
     notifier = shutil.which("terminal-notifier") or "/opt/homebrew/bin/terminal-notifier"
@@ -925,6 +936,8 @@ def chat_commands(ps_text, session_of):
 
 
 def reload_work():
+    if IS_WINDOWS:
+        return None                    # no ps to read the process tree with: can't tell, so it says nothing
     try:
         out = subprocess.run(["ps", "-Awwo", "pid=,ppid=,etime=,pcpu=,command="], capture_output=True, text=True, timeout=15).stdout
     except (OSError, subprocess.SubprocessError):

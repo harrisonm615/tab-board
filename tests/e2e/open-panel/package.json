@@ -1,0 +1,9 @@
+{
+  "name": "open-panel",
+  "displayName": "Test helper: opens Tabs & Progress",
+  "publisher": "test",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.94.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"]
+}

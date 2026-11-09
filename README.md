@@ -6,21 +6,31 @@ It comes in two parts. The **side bar** is a VS Code extension, and the **tab-bo
 
 ## Install
 
-Open Terminal and paste this line:
+**On a Mac,** open Terminal and paste this line:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/harrisonm615/tab-board/main/install.sh | sh
 ```
 
-It asks for no password. To read it first, open [install.sh](install.sh).
+Then press ⌘⇧P in VS Code and run **Developer: Reload Window**.
 
-Then press ⌘⇧P in VS Code and run **Developer: Reload Window**. A reload stops whatever your chats are running, so wait for a quiet moment. **Tabs & Progress** shows up as an icon on the left edge of the window.
+**On a Windows PC,** open PowerShell (press the Windows key, type PowerShell, press Enter) and paste this line:
+
+```
+irm https://raw.githubusercontent.com/harrisonm615/tab-board/main/install.ps1 | iex
+```
+
+Then press Ctrl+Shift+P in VS Code and run **Developer: Reload Window**.
+
+Neither asks for a password, and neither needs admin rights. To read them first, open [install.sh](install.sh) or [install.ps1](install.ps1). A reload stops whatever your chats are running, so wait for a quiet moment. **Tabs & Progress** shows up as an icon on the left edge of the window.
 
 ## What it needs
 
-- A Mac. Jumping to tabs, notices and the list of open tabs all rely on macOS.
+- A Mac or a Windows PC.
 - VS Code with an up-to-date Claude Code extension.
-- `python3`. If your Mac doesn't have it, the installer opens Apple's box for the free developer tools. Press Install.
+- Python. If your Mac doesn't have it, the installer opens Apple's box for the free developer tools; press Install. If your PC doesn't have it, the installer gets python.org's own copy (about 25 MB), checks it's signed by the Python Software Foundation, and puts it in your own Programs folder, just for you.
+
+On Windows, three things are Mac-only for now: pop-up notices (the list still shows what needs you), the meters for the GPU and the network (CPU, memory and the C: drive show), and the warning about which chats a reload would stop.
 
 ## Updates
 

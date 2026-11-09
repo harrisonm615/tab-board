@@ -1,7 +1,10 @@
 // What the Mac is doing right now: CPU, GPU, memory, network and free disk space.
 // Small system tools only, with no permission prompts, and only while the panel is showing. No battery: it's in the menu bar right above.
 const { execFile } = require('child_process')
+const fs = require('fs')
 const os = require('os')
+
+const IS_WINDOWS = process.platform === 'win32'
 
 const SLOW_EVERY = 3 // disks and the Wi-Fi link change slowly, so they're read every third look
 const STALE_MS = 20_000 // a gap longer than this means the panel was hidden: an average over the gap isn't "now"
@@ -9,7 +12,7 @@ const SMALL_DISK_GB = 8 // a recorder or a mounted installer isn't worth a place
 
 const run = (command, args, timeout = 5_000) =>
   new Promise(resolve => {
-    execFile(command, args, { timeout, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => resolve(error ? undefined : stdout))
+    execFile(command, args, { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout) => resolve(error ? undefined : stdout))
   })
 
 function cpuTimes(cores = os.cpus()) {
@@ -106,12 +109,36 @@ function linkFrom(route, wifi) {
   return { kind: device.startsWith('en') ? 'Wired' : 'Network' }
 }
 
+// Windows: memory as Task Manager counts it, and its own colors from how full it is, since Windows has no pressure level to read.
+function windowsMemory(totalBytes = os.totalmem(), freeBytes = os.freemem()) {
+  if (!(totalBytes > 0)) return undefined
+  const percent = Math.min(100 * (totalBytes - freeBytes) / totalBytes, 100)
+  const pressure = percent >= 95 ? 'critical' : percent >= 85 ? 'warning' : 'normal'
+  return { percent, usedGB: (totalBytes - freeBytes) / 2 ** 30, totalGB: totalBytes / 2 ** 30, pressure }
+}
+
+// Windows: the drive Windows is on. statfs needs no program and no permission.
+function windowsDisks(statfs = fs.statfsSync) {
+  const drive = `${(process.env.SystemDrive || 'C:').replace(/\\$/, '')}\\`
+  try {
+    const { bsize, blocks, bavail } = statfs(drive)
+    const totalGB = blocks * bsize / 1e9
+    const freeGB = bavail * bsize / 1e9
+    if (!(totalGB > 0)) return []
+    const share = freeGB / totalGB
+    return [{ name: 'This PC', freeGB, totalGB, tone: share < 0.03 || freeGB < 20 ? 'bad' : share < 0.15 ? 'warn' : '' }]
+  } catch {
+    return []
+  }
+}
+
 class Gauges {
   constructor() {
     this.looks = 0
   }
 
   async read() {
+    if (IS_WINDOWS) return this.readWindows()
     const now = Date.now()
     const cpuNow = cpuTimes()
     const [vm, pressure, netstat, ioreg] = await Promise.all([
@@ -137,6 +164,18 @@ class Gauges {
     return { ...out, disks: this.disks, link: this.link }
   }
 
+  // CPU, memory and the system drive. The Mac's other meters have no Windows tool that needs no setup, so they're left off rather than shown wrong.
+  readWindows() {
+    const now = Date.now()
+    const cpuNow = cpuTimes()
+    const fresh = this.before && now - this.before.at <= STALE_MS
+    const out = { at: now, os: 'windows', load: 0, cpu: fresh ? cpuPercent(this.before.cpu, cpuNow) : undefined, memory: windowsMemory() }
+    this.before = { at: now, cpu: cpuNow }
+    if (this.looks % SLOW_EVERY === 0) this.disks = windowsDisks()
+    this.looks += 1
+    return { ...out, disks: this.disks }
+  }
+
   async readSlow() {
     const [df, route, wifi] = await Promise.all([
       run('/bin/df', ['-kl']),
@@ -150,6 +189,7 @@ class Gauges {
 
 // macOS's own speed test. It pushes the line as hard as it can for about 45 seconds, so it only ever runs on a press.
 async function speedTest() {
+  if (IS_WINDOWS) return undefined
   const out = await run('/usr/bin/networkQuality', ['-s', '-c'], 120_000)
   try {
     const { dl_throughput: down, ul_throughput: up } = JSON.parse(out)
@@ -159,4 +199,4 @@ async function speedTest() {
   }
 }
 
-module.exports = { Gauges, speedTest, cpuPercent, cpuTimes, memoryFrom, netBytes, netRates, gpuPercent, disksFrom, wifiFrom, linkFrom }
+module.exports = { Gauges, speedTest, cpuPercent, cpuTimes, memoryFrom, netBytes, netRates, gpuPercent, disksFrom, wifiFrom, linkFrom, windowsMemory, windowsDisks }

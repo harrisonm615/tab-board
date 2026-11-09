@@ -1,0 +1,94 @@
+# Tests the Windows install end to end on a real Windows PC, the way someone on Windows would use it.
+# On the windows branch it installs that commit's files; on main, exactly what the README's install line gets.
+name: Windows
+on:
+  push:
+    branches: [windows]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install VS Code, just for this user
+        shell: powershell
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest 'https://update.code.visualstudio.com/latest/win32-x64-user/stable' -OutFile "$env:RUNNER_TEMP\vscode.exe" -UseBasicParsing
+          Start-Process "$env:RUNNER_TEMP\vscode.exe" -ArgumentList '/VERYSILENT', '/NORESTART', '/MERGETASKS=!runcode' -Wait
+          $code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd"
+          if (-not (Test-Path $code)) { throw 'VS Code did not install' }
+          & $code --version
+          New-Item -ItemType Directory -Force "$env:APPDATA\Code\User" | Out-Null
+          '{ "security.workspace.trust.enabled": false, "workbench.startupEditor": "none", "update.mode": "none", "telemetry.telemetryLevel": "off", "extensions.ignoreRecommendations": true }' | Set-Content "$env:APPDATA\Code\User\settings.json"
+
+      - name: Add the Claude Code extension
+        shell: powershell
+        run: |
+          & "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd" --install-extension anthropic.claude-code --force
+          Get-ChildItem "$env:USERPROFILE\.vscode\extensions\anthropic.claude-code-*\resources\native-binary" | Select-Object FullName, Length
+
+      - name: Run the install line in Windows PowerShell, with no Python on the PC
+        shell: powershell
+        run: |
+          if ('${{ github.ref_name }}' -ne 'main') {
+            $env:TAB_BOARD_BASE = "https://raw.githubusercontent.com/harrisonm615/tab-board/$env:GITHUB_SHA"
+            $env:TAB_BOARD_ZIP = "https://codeload.github.com/harrisonm615/tab-board/zip/$env:GITHUB_SHA"
+            $env:TAB_BOARD_TEST_NO_GIT = '1'   # the plugin comes from this commit's zip, which also tests the no-git way in
+          }
+          $env:TAB_BOARD_TEST_NO_PYTHON = '1'  # as on a PC that never had Python
+          $base = if ($env:TAB_BOARD_BASE) { $env:TAB_BOARD_BASE } else { 'https://raw.githubusercontent.com/harrisonm615/tab-board/main' }
+          irm "$base/install.ps1" | iex
+
+      - name: Check what the installer left
+        shell: powershell
+        run: |
+          $sideBar = Get-ChildItem "$env:USERPROFILE\.vscode\extensions" -Directory -Filter 'hcmnj.progress-sidebar-*' | Select-Object -First 1
+          if (-not $sideBar) { throw 'The side bar extension is not installed' }
+          "Side bar: $($sideBar.Name)"
+          $python = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" | Select-Object -First 1
+          if (-not $python) { throw 'Python is not in the Programs folder' }
+          & $python.FullName --version
+          $claude = Get-ChildItem "$env:USERPROFILE\.vscode\extensions\anthropic.claude-code-*\resources\native-binary\claude.exe" | Select-Object -First 1
+          $list = & $claude.FullName plugin list | Out-String
+          $list
+          if ($list -notmatch 'tab-board') { throw 'The tab-board plugin is not installed' }
+          "SIDEBAR=$($sideBar.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CLAUDE=$($claude.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: A real chat through a stand-in API, then the side bar reads it
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force "$env:USERPROFILE\Projects\shop portal" | Out-Null
+          Start-Process node -ArgumentList "`"$env:GITHUB_WORKSPACE\tests\e2e\mock-api.js`"", '8765', "`"$env:RUNNER_TEMP\api.log`"" -WindowStyle Hidden
+          Start-Sleep -Seconds 2
+          node "$env:GITHUB_WORKSPACE\tests\e2e\check.js" "$env:SIDEBAR" "$env:CLAUDE" "$env:USERPROFILE\Projects\shop portal" 'http://127.0.0.1:8765'
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\api.log" -ErrorAction SilentlyContinue; throw 'end-to-end checks failed' }
+          Get-ChildItem "$env:USERPROFILE\.claude\projects" | Select-Object Name
+
+      - name: Open VS Code with the side bar showing, and take a screenshot
+        shell: powershell
+        run: |
+          $env:PANEL_REPORT = "$env:RUNNER_TEMP\panel.txt"
+          $code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
+          Start-Process $code -ArgumentList "--extensionDevelopmentPath=`"$env:GITHUB_WORKSPACE\tests\e2e\open-panel`"", "`"$env:USERPROFILE\Projects\shop portal`""
+          Start-Sleep -Seconds 45
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $shot = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\out" | Out-Null
+          $shot.Save("$env:RUNNER_TEMP\out\sidebar-on-windows.png")
+          Get-Content $env:PANEL_REPORT -ErrorAction SilentlyContinue
+          Copy-Item $env:PANEL_REPORT "$env:RUNNER_TEMP\out\" -ErrorAction SilentlyContinue
+          Get-ChildItem "$env:APPDATA\Code\logs" -Recurse -Filter 'exthost.log' | ForEach-Object { Copy-Item $_.FullName "$env:RUNNER_TEMP\out\exthost-$($_.Directory.Parent.Name).log" }
+          Get-Process Code -ErrorAction SilentlyContinue | Stop-Process -Force
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-results
+          path: ${{ runner.temp }}/out
