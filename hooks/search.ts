@@ -123,7 +123,7 @@ for sid, path in paths.items():
         entry['snippet'] = snip(best[2], best[3])
     found.append(entry)
 
-# Most said first: the tab about it, not the one that mentions it in passing.
-found.sort(key=lambda e: (-e['hits'], -e['modified']))
+# Newest first: people look for a chat by when they had it; the row still says how often.
+found.sort(key=lambda e: -e['modified'])
 print(json.dumps(found[:40]))
 `

@@ -1,50 +1,55 @@
-# Tab board
+# Tabs & Progress
 
-See every Claude Code tab in VS Code at once, and find any tab by what was said in it.
+One list in the VS Code side bar for every Claude Code chat: which ones need you, which are still working, and which look done. A search box finds a chat by what was said in it, even when its name says nothing about it.
 
-If you keep a lot of Claude tabs open, it gets hard to tell which one is waiting on you, which one is finished, and where that conversation about invoices went. This adds a small band above the prompt and a full board you can open from any tab.
-
-## What you get
-
-- **A band above the prompt.** It names the other tabs that want you, with a button that jumps straight to each one, and counts the tabs that are working or ready to close.
-- **The board.** Type `/tabs` to see every open tab, sorted into Needs you, Your move, Ready to close, Working, Waiting and Idle. Each one shows what it's doing or what it's waiting on. A tab that's ready to close says whether it's done, parked on something only you can do, or has gone quiet.
-- **Search.** Use the box at the top of the board, or type `/tabs some words`, to find the tabs where those words were said, even if the tab's name says nothing about them. Every word has to appear, and "quotes" make a phrase. It looks through every open tab plus any chat from the last 7 days, and Open brings back a tab that isn't open anymore.
-- **Mac notifications.** You get one when a tab needs you, stops on an error, or finishes a turn that ran at least 30 seconds.
+It comes in two parts. The **side bar** is a VS Code extension, and the **tab-board plugin** is how each chat reports what it's doing. See [sidebar/README.md](sidebar/README.md) for everything the side bar does.
 
 ## Install
 
-Run this in Terminal:
+Open Terminal and paste this line:
 
 ```
-claude plugin install tab-board --marketplace harrisonm615/tab-board
+curl -fsSL https://raw.githubusercontent.com/harrisonm615/tab-board/main/install.sh | sh
 ```
 
-If Terminal says `claude` isn't found, you're only running Claude Code through the VS Code extension. This uses the extension's copy instead:
+It asks for no password. To read it first, open [install.sh](install.sh).
 
-```
-"$(ls -d ~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude | sort -V | tail -1)" plugin install tab-board --marketplace harrisonm615/tab-board
-```
-
-Then run **Developer: Reload Window** in VS Code so your tabs pick it up.
-
-Clicking a notification only jumps to its tab if you also run `brew install terminal-notifier` and allow it under System Settings → Notifications. Without it, notifications still show up.
+Then press ⌘⇧P in VS Code and run **Developer: Reload Window**. A reload stops whatever your chats are running, so wait for a quiet moment. **Tabs & Progress** shows up as an icon on the left edge of the window.
 
 ## What it needs
 
-- A Mac. Jumping to tabs, notifications and the list of open tabs all rely on macOS.
-- VS Code with an up-to-date Claude Code extension. It was built on version 2.1.314.
-- `python3` for search. If your Mac doesn't have it, run `xcode-select --install`.
+- A Mac. Jumping to tabs, notices and the list of open tabs all rely on macOS.
+- VS Code with an up-to-date Claude Code extension.
+- `python3`. If your Mac doesn't have it, the installer opens Apple's box for the free developer tools. Press Install.
+
+## Updates
+
+The side bar checks GitHub for a new version every 6 hours, and a line with an **Update** button appears at the top when there is one. That button updates the plugin too. You can also paste the install line again at any time.
 
 ## Where your data goes
 
-Tab states are saved in `~/.claude/tab-board/`, and search reads your chat history in `~/.claude/projects/`. Both stay on your computer.
+Your chats are read on your computer. The one thing sent out goes to Haiku, Claude's smallest model, on your own Claude account: the last messages of a chat, to work out whether it's waiting on you or looks done. That uses a little of your plan and goes to the same place your chats already go. The full details are in [sidebar/README.md](sidebar/README.md#where-your-data-goes).
 
-The one thing sent out: when a turn ends, the tab's name, your last message and Claude's last reply go to Haiku on your own Claude account, which decides whether the tab is waiting on you or ready to close. That uses a small amount of your Claude usage.
+## Without the side bar
 
-The extension has no way to close a tab for you, so Open takes you there and you press ⌘W. **Claude Code: Reopen Closed Session** brings one back.
+The plugin works alone. It adds a band above the prompt naming the tabs that want you, and `/tabs` opens a full board with search. To install only that:
+
+```
+claude plugin marketplace add harrisonm615/tab-board
+claude plugin install tab-board@tab-board
+```
+
+If Terminal says `claude` isn't found, you're running Claude Code only through the VS Code extension, so use the install line above instead.
 
 ## Remove it
 
 ```
 claude plugin uninstall tab-board@tab-board
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --uninstall-extension hcmnj.progress-sidebar
+```
+
+If `claude` isn't found, replace it with the extension's copy:
+
+```
+"$(ls -t ~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude | head -n 1)" plugin uninstall tab-board@tab-board
 ```

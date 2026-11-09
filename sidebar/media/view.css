@@ -1,0 +1,223 @@
+/* VS Code's own theme colors, so it always looks like the rest of the window. */
+body { margin: 0; padding: 0; color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
+#top { position: sticky; top: 0; z-index: 3; padding: 8px 12px; background: var(--vscode-sideBar-background); }
+#search-box { position: relative; }
+#search-clear { position: absolute; top: 50%; right: 3px; transform: translateY(-50%); width: 20px; height: 20px; padding: 0; line-height: 20px; text-align: center; color: var(--vscode-input-foreground); background: none; opacity: .7; font-size: 12px; }
+#search-clear:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .25)); opacity: 1; }
+#search-clear[hidden] { display: none; }
+#search { box-sizing: border-box; width: 100%; padding: 4px 26px 4px 8px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font: inherit; }
+#search:focus { border-color: var(--vscode-focusBorder); }
+#search::placeholder { color: var(--vscode-input-placeholderForeground); }
+#counts { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 5px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+#counts:empty { display: none; }
+.none { white-space: nowrap; }
+/* The reload line, first thing in the panel, in three looks: faint when no reload is needed, amber when an update is waiting on running work, solid green when it's time. */
+#status { margin-bottom: 7px; }
+#status:empty { display: none; }
+.reload-go { flex: none; white-space: nowrap; }
+.reload-head { font-weight: 700; }
+.reload-sub { display: block; padding: 0; text-align: left; font-size: 12px; color: inherit; background: none; }
+
+.reload-none { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 18px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.reload-say { min-width: 0; opacity: .8; }
+.reload-none .reload-go { padding: 0 5px; line-height: 16px; font-size: 12px; color: inherit; background: none; opacity: .55; }
+.reload-none .reload-go:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .25)); opacity: 1; }
+
+.reload-wait { padding: 6px 6px 6px 9px; border: 1px solid var(--vscode-charts-orange); border-radius: 4px; font-size: 12px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-charts-orange) 16%, var(--vscode-sideBar-background)); }
+.reload-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.reload-wait .reload-go { padding: 2px 8px; }
+.reload-wait .reload-sub { margin-top: 2px; }
+.reload-wait button.reload-sub:hover { text-decoration: underline; background: none; }
+.reload-wait .chev { margin-left: 4px; }
+
+.reload-time { padding: 9px 10px 10px; border-radius: 5px; font-size: 12px; color: var(--vscode-editor-background); background: var(--vscode-charts-green); animation: reload-pulse 1.8s ease-in-out infinite; }
+.reload-time .reload-head { font-size: 15px; line-height: 19px; }
+.reload-time .reload-sub { margin: 1px 0 8px; }
+.reload-time .reload-go, .reload-time .reload-go:hover { display: block; width: 100%; padding: 6px 8px; font-size: 13px; font-weight: 700; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+.reload-time .reload-go:hover { filter: brightness(1.25); }
+@keyframes reload-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--vscode-charts-green) 45%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .reload-time { animation: none; } }
+.status-line { display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.status-go { margin-left: auto; padding: 0 8px; line-height: 16px; }
+.status-go:disabled { opacity: .6; cursor: default; }
+
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
+/* One color rule for the whole panel. Green: fine, finished, plenty of room. Blue: moving right now. Orange: your turn, or getting tight. Red: trouble, stopped or full. Grey: resting. */
+.tone-needs, .tone-bad { background: var(--vscode-charts-red); }
+.tone-step, .tone-warn { background: var(--vscode-charts-orange); }
+.tone-finished, .tone-done, .tone-closable, .tone-ok { background: var(--vscode-charts-green); }
+.tone-working, .tone-running { background: var(--vscode-charts-blue); }
+.tone-waiting { background: var(--vscode-charts-blue); opacity: .55; }
+.tone-idle, .tone-wait, .tone-blocked, .tone-sitting { background: var(--vscode-descriptionForeground); }
+.text-needs, .text-bad { color: var(--vscode-charts-red); }
+.text-step, .text-warn { color: var(--vscode-charts-orange); }
+.text-finished, .text-ok { color: var(--vscode-charts-green); }
+.text-working { color: var(--vscode-charts-blue); }
+.text-waiting { color: var(--vscode-charts-blue); }
+.text-idle { color: var(--vscode-descriptionForeground); }
+
+.next { margin-left: auto; padding: 0 8px; line-height: 16px; font-weight: 400; }
+.overlap { display: grid; grid-template-columns: 8px minmax(0, 1fr); column-gap: 8px; align-items: baseline; padding: 3px 12px; }
+.overlap .dot { align-self: center; }
+.overlap-who { min-width: 0; font-size: 12px; }
+.overlap-files { grid-column: 2 / -1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.link { padding: 0; text-align: left; font-size: 12px; font-weight: 500; color: var(--vscode-textLink-foreground); background: none; }
+.link:hover { text-decoration: underline; background: none; }
+
+.row { position: relative; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; padding: 3px 12px; }
+.tab { cursor: pointer; }
+.tab:hover, .tab:focus { outline: none; background: var(--vscode-list-hoverBackground); }
+.title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
+.age { margin-left: 6px; white-space: nowrap; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.note { grid-column: 2 / 4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.tag { margin-right: 5px; font-weight: 600; }
+.meter { grid-column: 2 / 4; height: 4px; margin: 3px 0 2px; border-radius: 2px; background: var(--vscode-editorWidget-border, rgba(128, 128, 128, .3)); overflow: hidden; }
+.fill { height: 100%; border-radius: 2px; }
+
+button { border: none; border-radius: 3px; cursor: pointer; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); font: inherit; font-size: 11px; }
+button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+/* A row's buttons wait behind one small ⋯, so a click meant to view a tab can't land on one. */
+.acts { position: absolute; top: 3px; right: 12px; display: none; gap: 4px; padding-left: 4px; }
+.acts.open { background: var(--vscode-sideBar-background); }
+.act { padding: 1px 8px; }
+.acts:not(.open) > .act { display: none; }
+.act-more { width: 16px; padding: 0; font-size: 13px; line-height: 16px; color: var(--vscode-descriptionForeground); background: none; }
+.act-more:hover, .acts.open > .act-more { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .25)); }
+.tab:hover .acts, .tab:focus-within .acts, .acts.open { display: flex; }
+.tab:hover:has(.acts) .age, .tab:focus-within:has(.acts) .age { visibility: hidden; }
+
+.move { display: inline-flex; gap: 3px; margin-left: 6px; }
+.arrow { width: 20px; padding: 0 0 1px; line-height: 16px; }
+.arrow:disabled { opacity: .3; cursor: default; }
+.let-run { padding: 1px 8px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.prio .note:not(:last-child) { grid-column: 2; }
+.prio.top { padding-top: 5px; padding-bottom: 5px; background: var(--vscode-list-hoverBackground); box-shadow: inset 2px 0 0 var(--vscode-charts-blue); }
+.prio.top.by-you { box-shadow: inset 2px 0 0 var(--vscode-charts-orange); }
+.prio .note { white-space: normal; }
+.make-priority { margin-left: 6px; padding: 0 6px; line-height: 16px; white-space: nowrap; }
+.prio-foot { padding: 4px 12px 0 28px; }
+
+.found-top { padding: 8px 12px 6px; }
+.found-said { margin-bottom: 6px; font-weight: 600; }
+.back { padding: 2px 8px; }
+.foot { padding: 12px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.alarm { margin: 4px 12px; padding: 5px 8px; border-radius: 4px; color: var(--vscode-editor-background); background: var(--vscode-charts-orange); font-size: 12px; }
+.alarm-apps { padding: 5px 0 1px; }
+.app { grid-template-columns: 8px minmax(0, 1fr) auto auto; }
+.act.app-x { min-width: 18px; padding: 0 4px; border: none; border-radius: 3px; background: transparent; color: var(--vscode-descriptionForeground); font-size: 14px; line-height: 16px; }
+.act.app-x:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+.app .title { font-weight: 400; }
+.act:disabled { opacity: .5; cursor: default; }
+
+/* The accordion: one section open at a time. The open heading stays on screen under the top bar and, when it's there, Ready to ship's heading. */
+#list:has(> .ship-head) { --ship-h: 28px; }
+.sec { scroll-margin-top: calc(var(--top-h, 0px) + var(--ship-h, 0px)); }
+.fold { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 12px; border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, .3))); border-radius: 0; text-align: left; font-size: 12px; font-weight: 600; color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground)); background: none; }
+.fold:hover { background: var(--vscode-list-hoverBackground); }
+.fold.open:not(.sub, .ship-head) { position: sticky; top: calc(var(--top-h, 0px) + var(--ship-h, 0px)); z-index: 1; background: var(--vscode-sideBar-background); }
+.fold.sub { margin-top: 2px; padding: 3px 12px 3px 20px; border-top: none; font-weight: 500; color: var(--vscode-descriptionForeground); scroll-margin-top: calc(var(--top-h, 0px) + var(--ship-h, 0px) + 28px); }
+.chev { flex: none; display: inline-block; width: 12px; font-size: 15px; line-height: 1; text-align: center; }
+.act .chev { margin-left: 4px; vertical-align: -1px; }
+.fold-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fold-count { flex: none; margin-left: auto; font-weight: 400; }
+/* A section's name stays readable: if the width runs out, its count gives way first. */
+.fold:not(.sub) > .fold-count { flex: 0 9999 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sec-bar { display: flex; align-items: center; gap: 8px; padding: 5px 12px 2px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.sec-note { min-width: 0; flex: 1 1 auto; }
+.sec-bar button { flex: none; }
+/* The button's width can't be taken from a long note beside it, so the note gets the whole line and the button goes under it. */
+.sec-bar:has(.let-run) { flex-wrap: wrap; }
+.sec-bar:has(.let-run) .sec-note { flex-basis: 100%; }
+
+/* One small line for what's waiting or finished. */
+.slim { grid-template-columns: 8px auto minmax(0, 1fr) auto; padding-top: 2px; padding-bottom: 2px; }
+.slim .title { font-weight: 400; }
+.slim .note { grid-column: 3; margin-left: 2px; }
+
+/* Tiles: what's on you. One column in a narrow side bar, more when it's wide. Short on purpose: a name line and two lines of the ask, with the rest on hover. A date leads the ask, so it can't be cut off. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 3px; padding: 2px 8px 3px; }
+.tile { position: relative; display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 3px 6px 4px 7px; border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, .3)); border-left: 3px solid var(--vscode-charts-orange); border-radius: 4px; }
+.tile.urgent { border-left-color: var(--vscode-charts-red); }
+.tile.first { background: var(--vscode-list-hoverBackground); }
+.tile-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tile-top .title { flex: 1 1 auto; min-width: 0; }
+.tile-ask { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 1.25; }
+.tile-lead { font-weight: 600; color: var(--vscode-descriptionForeground); }
+.tile-lead.soon { color: var(--vscode-charts-red); }
+.tile-why { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; font-weight: 600; color: var(--vscode-charts-orange); }
+.tile .acts { top: 2px; right: 4px; }
+.full-note .note { white-space: normal; }
+
+/* What's working now breathes, so it's clear it's alive. */
+.live { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .live { animation: none; } }
+.hint { margin: 4px 12px; padding: 5px 8px; border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, .3)); border-radius: 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+
+/* Ready to ship: the one thing on this list that shouldn't be missable. */
+.fold.ship-head { position: sticky; top: var(--top-h, 0px); z-index: 2; box-sizing: border-box; height: 28px; font-size: 13px; font-weight: 700; color: var(--vscode-charts-green); background: var(--vscode-sideBar-background); }
+.fold.ship-head:hover { background: color-mix(in srgb, var(--vscode-charts-green) 12%, var(--vscode-sideBar-background)); }
+.ship-head .fold-count { padding: 1px 8px; border-radius: 9px; font-weight: 700; color: var(--vscode-editor-background); background: var(--vscode-charts-green); }
+.ship-spot { scroll-margin-top: var(--top-h, 0px); }
+.tile.ship { gap: 5px; border: 1px solid var(--vscode-charts-green); border-left-width: 4px; background: color-mix(in srgb, var(--vscode-charts-green) 15%, var(--vscode-sideBar-background)); }
+.tile.ship:hover, .tile.ship:focus { background: color-mix(in srgb, var(--vscode-charts-green) 22%, var(--vscode-sideBar-background)); }
+.tile.ship .tile-ask { display: block; font-size: 13px; font-weight: 500; line-height: 1.3; } /* always in full: this one reaches real people */
+.ship-cmd { display: block; padding: 3px 6px; border-radius: 3px; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.35; background: rgba(128, 128, 128, .2); }
+.ship-failed { font-size: 12px; font-weight: 600; color: var(--vscode-charts-red); }
+.ship-note { font-size: 12px; color: var(--vscode-descriptionForeground); }
+.ship-go, .ship-go:hover { width: 100%; padding: 4px 10px; border-radius: 4px; font-size: 13px; font-weight: 700; color: var(--vscode-editor-background); background: var(--vscode-charts-green); }
+.ship-go:hover { filter: brightness(1.12); }
+.ship-go.is-counting, .ship-go.is-counting:hover { background: var(--vscode-charts-orange); }
+.ship-go.is-failed, .ship-go.is-failed:hover { background: var(--vscode-charts-red); }
+.ship-go:disabled { font-weight: 600; color: var(--vscode-foreground); background: rgba(128, 128, 128, .25); filter: none; cursor: default; }
+
+/* Plan usage, always in view at the top. The mark is how far through that limit's time you are. */
+#usage { display: grid; gap: 6px; }
+#usage:empty { display: none; }
+.usage-top { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.usage-label, .usage-num { white-space: nowrap; }
+.usage-num { margin-left: auto; }
+.usage-bar { position: relative; height: 4px; margin-top: 3px; border-radius: 2px; background: var(--vscode-editorWidget-border, rgba(128, 128, 128, .3)); }
+.usage-fill { height: 100%; border-radius: 2px; }
+.usage-mark { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--vscode-foreground); }
+
+/* Claude's usage, the Mac's meters and open apps. They scroll away with the list, so a long section gets the whole panel. */
+#mac { padding: 0 12px 6px; }
+#gauges { margin-top: 7px; container-type: inline-size; }
+#lower { container-type: inline-size; }
+#lower:empty { display: none; }
+#gauges:first-child { margin-top: 0; }
+#gauges:empty { display: none; }
+.gauge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
+.gauge { min-width: 0; }
+.gauge-top { display: flex; justify-content: space-between; gap: 4px; white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.gauge-label { overflow: hidden; text-overflow: ellipsis; }
+.gauge-figure { flex: none; font-variant-numeric: tabular-nums; color: var(--vscode-foreground); }
+.disk-grid { margin-top: 8px; }
+.disk-grid .gauge-top { display: block; }
+.disk-grid .gauge-label, .disk-grid .gauge-figure { display: block; }
+.disk-grid .gauge-figure { overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.net { display: grid; grid-template-columns: auto auto auto 1fr auto; align-items: center; gap: 3px 8px; margin-top: 9px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.net-label { grid-column: 1; white-space: nowrap; }
+.net-wide { grid-column: 2 / -1; }
+.net-words { grid-column: 2 / 5; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.net-status { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.net-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.net-unit { font-size: 11px; }
+.signal { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.signal-bar { width: 3px; border-radius: 1px; background: currentColor; opacity: .25; }
+.signal-bar.on { opacity: 1; }
+.signal-bar:nth-child(1) { height: 4px; }
+.signal-bar:nth-child(2) { height: 6px; }
+.signal-bar:nth-child(3) { height: 9px; }
+.signal-bar:nth-child(4) { height: 12px; }
+@container (max-width: 239px) { .gauge-top, .gauge-label, .gauge-figure { display: block; } }
+@container (max-width: 190px) { .net { gap: 3px 5px; } .net-unit { display: none; } }
+.speed-go { grid-column: 5; padding: 0 6px; line-height: 16px; }
+.speed-go:disabled { opacity: .6; cursor: default; }
+#apps:empty { display: none; }
+.mini-head { display: flex; align-items: center; gap: 3px; width: 100%; margin-top: 10px; padding: 1px 0; border-radius: 0; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vscode-descriptionForeground); background: none; }
+.mini-head:hover { color: var(--vscode-foreground); background: none; }
+.mini-head .chev { width: auto; font-size: 13px; }
+.mini-note { margin-left: auto; font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.apps-list .row { padding-left: 0; padding-right: 0; }

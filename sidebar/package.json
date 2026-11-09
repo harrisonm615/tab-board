@@ -1,0 +1,80 @@
+{
+  "name": "progress-sidebar",
+  "displayName": "Tabs & Progress",
+  "publisher": "hcmnj",
+  "version": "0.4.24",
+  "description": "Every Claude tab and long job in one list in the VS Code side bar, the same across all chats.",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hcmnj-progress",
+          "title": "Tabs & Progress",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "hcmnj-progress": [
+        {
+          "type": "webview",
+          "id": "hcmnj.progress",
+          "name": "Tabs & Progress"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "hcmnj.progress.collapse",
+        "title": "Collapse",
+        "category": "Tabs & Progress",
+        "icon": "$(chevron-left)"
+      },
+      {
+        "command": "hcmnj.progress.expand",
+        "title": "Open Tabs & Progress",
+        "category": "Tabs & Progress",
+        "icon": "$(chevron-right)"
+      },
+      {
+        "command": "hcmnj.progress.toggle",
+        "title": "Open or Collapse",
+        "category": "Tabs & Progress"
+      },
+      {
+        "command": "hcmnj.progress.next",
+        "title": "Go to the next tab waiting on you",
+        "category": "Tabs & Progress"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "hcmnj.progress.collapse",
+          "when": "view == hcmnj.progress",
+          "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "hcmnj.progress.expand",
+          "when": "!sideBarVisible",
+          "group": "navigation@-100"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "hcmnj.progress.next",
+        "key": "ctrl+cmd+n"
+      }
+    ]
+  }
+}

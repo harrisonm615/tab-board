@@ -2,3 +2,4 @@
 *.log
 .mcpb-cache/
 .claude-plugin/types/
+__pycache__/

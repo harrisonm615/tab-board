@@ -27,6 +27,42 @@ const NOTIFIER = '/opt/homebrew/bin/terminal-notifier'
 const OPEN_TABS_MS = 20_000
 // Where VS Code keeps, per window, the Claude tabs it has open.
 const WORKSPACES = 'Library/Application Support/Code/User/workspaceStorage'
+// The Tabs & Progress side bar lists every tab in one place, so with that extension
+// installed the band steps aside. Uninstall it and the band comes back by itself.
+const SIDE_BAR = 'hcmnj.progress-sidebar-'
+// The side bar draws the list now, so a tab only looks around to fill in tabs that aren't running.
+const SIDE_BAR_POLL_MS = 60_000
+// Two chats in one file. Each chat keeps a short list of what it just edited in ~/.claude/tab-edits (not tab-board, where every file is taken for a tab),
+// and a chat that edits a file another chat touched lately hears who, in a note only the model reads. The side bar's Same files looks back just as far.
+const CROSS_MS = 30 * 60_000
+const CROSS_AGAIN_MS = 10 * 60_000 // two chats taking turns in a file shouldn't hear it at every edit
+const CROSS_SWEEP_MS = 24 * 60 * 60_000
+const NOT_SHARED = /^(\/private)?\/tmp\/|\/\.claude\/projects\/|\/\.claude\/progress\/|\/\.claude\/tab-/ // scratch space and each tab's own notes, as in the side bar's collect.py
+// A press of a ship button in the side bar leaves a note for this chat, and that note becomes the person's reply.
+// A note only picks which of these words go: it can't carry any of its own, so nothing else that writes a file can speak for them.
+const NOTE_MS = 2000
+const NOTE_MAX_MS = 60_000 // the side bar takes back a note that wasn't taken by then, so an older one was left by a reload
+type Note = { kind?: unknown; since?: unknown; code?: unknown; at?: unknown }
+const wordsFor = (note: Note) => {
+  if (note.kind === 'ship') return 'ship it'
+  if (note.kind === 'test') return 'Side bar test: please reply with just the word OK. Nothing else is needed.'
+  if (note.kind !== 'ran' || !Number.isInteger(note.code)) return undefined
+  return note.code === 0
+    ? 'I ran it in the terminal and it finished with exit code 0.'
+    : `I ran it in the terminal and it failed with exit code ${String(note.code)}. The output is in VS Code's terminal panel.`
+}
+// How a long job of any kind reaches the side bar. Only new threads read this: a running thread keeps its prompt.
+const CARD_NOTE = `# Long jobs
+
+When you start work that will keep running for more than a few minutes (a build, deploy, test run, data pull, migration, render, upload, anything), keep one small file for it at ~/.claude/progress/<short-name>.json, so the person can see it in the Tabs & Progress side bar without opening this tab:
+
+{"name": "Deploy site", "text": "Step 3 of 5", "frac": 0.6, "state": "running"}
+
+name and state are required. state is running, done or bad. text is one short plain line, and frac is progress from 0 to 1 if you can tell. Add "mins_left" with your best guess at the minutes left, whenever you can make one, since the side bar uses it to show when the job will finish. Add "group" to file it under a heading. Update it as the job moves, from the job's own script when you can, and set state to done or bad when it ends. Skip it for anything short.
+
+# Asking to ship
+
+When the only thing left is the person's OK to put finished work live, end your message by asking "Ship it?" on its own line. If they have to run it themselves, give exactly one command in one code block. The side bar turns either one into a button, so they don't have to type.`
 
 const ORDER: Record<TabState, number> = { needs: 0, step: 1, finished: 2, working: 3, waiting: 4, idle: 5, closed: 6 }
 const ICON: Record<TabState, string> = {
@@ -115,6 +151,7 @@ let openTabs: Map<string, string> | undefined
 let openTabsAt = 0
 let isLeader = false
 let isBackfilling = false
+let hasSideBar = false
 const checked = new Set<string>()
 const NO_MESSAGES = 'No messages yet'
 let me: TabRecord | undefined
@@ -124,6 +161,8 @@ let firstPrompt = ''
 let lastAsk = ''
 let background = 0
 let asking = 0
+let myEdits: Record<string, number> = {} // file: when this chat last edited it
+const crossTold = new Map<string, { at: number; edit: number }>() // other chat + file: when this chat heard, and about which edit
 let notified = ''
 let shown = ''
 let writes: Promise<unknown> = Promise.resolve()
@@ -692,7 +731,8 @@ const settle = async (
   await readTitle($)
   await save($, {})
   await refresh($)
-  if (isLong && me !== undefined && (me.state === 'step' || me.state === 'finished')) {
+  // With the side bar, a turn ending only updates the list. It sends its own notice when a date is close or a new ask matters, so a sound still means something.
+  if (isLong && !hasSideBar && me !== undefined && (me.state === 'step' || me.state === 'finished')) {
     await notify($, me.state === 'step' ? 'Your move' : 'Ready to close', me.detail)
   }
 }
@@ -702,14 +742,74 @@ const sweep = async ($: Engine) => {
   const old = (await $.fs.list(dir).catch(() => []))
     .filter(entry => entry.kind === 'file' && entry.name !== 'seen.json' && now - entry.mtimeMs > SWEEP_MS)
     .map(entry => `${dir}/${entry.name}`)
-  if (old.length > 0) await $.process.run(['rm', '-f', ...old])
+  const edits = `${home}/.claude/tab-edits`
+  const oldEdits = (await $.fs.list(edits).catch(() => []))
+    .filter(entry => entry.kind === 'file' && now - entry.mtimeMs > CROSS_SWEEP_MS)
+    .map(entry => `${edits}/${entry.name}`)
+  if (old.length + oldEdits.length > 0) await $.process.run(['rm', '-f', ...old, ...oldEdits])
+}
+
+const minutesAgo = (ms: number) => {
+  const minutes = Math.round(ms / 60_000)
+  return minutes < 1 ? 'moments ago' : minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`
+}
+
+// Writes down this chat's edit, then says who else has been in that file lately. Going wrong only means no note.
+const crossEdit = async ($: Engine, file: string): Promise<string | undefined> => {
+  if (me === undefined || NOT_SHARED.test(file)) return undefined
+  const now = await $.clock.now()
+  for (const [path, at] of Object.entries(myEdits)) if (now - at > CROSS_MS) delete myEdits[path]
+  myEdits[file] = now
+  const edits = `${home}/.claude/tab-edits`
+  await $.fs.write(`${edits}/${me.id}.json`, JSON.stringify(myEdits))
+  const heard: string[] = []
+  for (const entry of await $.fs.list(edits).catch(() => [])) {
+    const other = entry.name.replace(/\.json$/, '')
+    if (other === me.id || !entry.name.endsWith('.json') || now - entry.mtimeMs > CROSS_MS) continue
+    const when = (await readJson<Record<string, unknown>>($, `${edits}/${entry.name}`))?.[file]
+    if (typeof when !== 'number' || now - when > CROSS_MS) continue
+    const key = `${other} ${file}`
+    const told = crossTold.get(key)
+    if (told !== undefined && (when <= told.edit || now - told.at < CROSS_AGAIN_MS)) continue
+    crossTold.set(key, { at: now, edit: when })
+    const record = await readJson<TabRecord>($, `${dir}/${other}.json`)
+    const isWorking = (record?.state === 'working' || record?.state === 'needs') && now - (record.beat ?? 0) <= GONE_MS
+    heard.push(`"${clip(record?.title || 'Another chat', 60)}" (${minutesAgo(now - when)}, ${isWorking ? 'still working' : 'stopped for now'})`)
+  }
+  if (heard.length === 0) return undefined
+  return `Another chat edited this same file in the last 30 minutes: ${file}. Who: ${heard.join(', ')}. Re-read the file before your next change, so you build on that work and don't undo it. A build or ship from this folder would include that chat's edits, finished or not, so check they're ready first, and tell the person if you can't be sure.`
+}
+
+const crossNote = async <R extends { deny?: unknown; isError?: unknown; context?: readonly string[] }>($: Engine, file: string, ran: R): Promise<R> => {
+  if (ran.deny !== undefined || ran.isError === true) return ran
+  const note = await crossEdit($, file).catch(() => undefined)
+  return note === undefined ? ran : ({ ...ran, context: [...(ran.context ?? []), note] } as R)
+}
+
+// A chat that has moved on since the press leaves the note alone: the side bar sees it wasn't taken, takes it back and says so.
+const checkNote = async ($: Engine) => {
+  if (me === undefined) return
+  const path = `${home}/.claude/tab-triage/send/${me.id}.json`
+  if (!(await $.fs.exists(path))) return
+  const note = await readJson<Note>($, path)
+  if (note === undefined) return
+  const isOld = typeof note.at !== 'number' || (await $.clock.now()) - note.at > NOTE_MAX_MS
+  const text = wordsFor(note)
+  const isWaiting = me.state === 'step' || me.state === 'finished' || me.state === 'idle'
+  const isCurrent = note.kind === 'test' || (note.since === me.since && isWaiting)
+  if (!isOld && (text === undefined || !isCurrent)) return
+  const { exitCode } = await $.process.run(['rm', path]) // whoever removes it owns it, so it can only go once
+  if (exitCode === 0 && !isOld && text !== undefined) await $.prompt.submit({ text, asUser: true })
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
       home = (await $.env.get('HOME')) ?? ''
+      myEdits = {}
+      crossTold.clear()
       dir = `${home}/.claude/tab-board`
+      hasSideBar = (await $.fs.list(`${home}/.vscode/extensions`).catch(() => [])).some(entry => entry.name.startsWith(SIDE_BAR))
       await $.command.register({
         name: 'tabs',
         description: 'Show every Claude tab: what needs you, what is ready to close, what is working. Add words to find the tab where they were said',
@@ -718,12 +818,20 @@ export const register: Register = on => {
       await begin($)
       await sweep($)
       await refresh($)
-      $.clock.every(POLL_MS, () => void refresh($).catch(() => undefined))
+      $.clock.every(hasSideBar ? SIDE_BAR_POLL_MS : POLL_MS, () => void refresh($).catch(() => undefined))
       $.clock.every(BEAT_MS, () => void save($, {}))
+      if (hasSideBar) $.clock.every(NOTE_MS, () => void checkNote($).catch(() => undefined))
     } catch {
       // the board is a nicety; never hold up the session for it
     }
     return next(e)
+  })
+
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    // Nothing draws in a headless run, so it has no one to report to.
+    if (!hasSideBar || e.surfaces.length === 0) return composed
+    return { sections: [...composed.sections, { id: 'tab-board:long-jobs', text: CARD_NOTE, scope: 'session' as const }] }
   })
 
   on('command.run', { command: 'tabs' }, async ($, e) => {
@@ -794,6 +902,11 @@ export const register: Register = on => {
     return result
   }).catch(($, e, next) => next(e))
 
+  // Only edits that landed count. None of this can stop or change the edit itself.
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => crossNote($, e.file_path, await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => crossNote($, e.file_path, await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => crossNote($, e.notebook_path, await next(e))).catch(($, e, next) => next(e))
+
   on('classic.PermissionRequest', async ($, e, next) => {
     await needsYou($, `Approve: ${describe(e.tool_name, e.tool_input)}`)
     return next(e)
@@ -857,6 +970,7 @@ export const register: Register = on => {
 
   // One line above the prompt: the other tabs that want you, and how many are busy.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (hasSideBar) return next(e)
     const list = await read($, rows)
     const others = list.filter(row => !row.isMine)
     const hot = others.filter(row => row.state === 'needs' || row.state === 'step')
@@ -950,7 +1064,7 @@ export const register: Register = on => {
             ? `Could not search: ${found.error}`
             : found.hits.length === 0
               ? `No tab mentions ${said}, open or from the last ${SEARCH_DAYS} days`
-              : `${found.hits.length === 1 ? '1 tab mentions' : `${found.hits.length} tabs mention`} ${said}${found.hits.length === 1 ? '' : ', most first'}`
+              : `${found.hits.length === 1 ? '1 tab mentions' : `${found.hits.length} tabs mention`} ${said}${found.hits.length === 1 ? '' : ', newest first'}`
       const meta = (hit: SearchHit) =>
         [hit.project, hit.age, mentions(hit), hit.isOpen ? '' : 'not open'].filter(part => part !== '').join(' · ')
       const top = (

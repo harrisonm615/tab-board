@@ -21,6 +21,12 @@ type World = {
   openTabs: string
   records: Record<string, object>
   found: string
+  hasSideBar: boolean
+  note?: object
+  sent: { text: string; asUser?: true }[]
+  edits?: Record<string, Record<string, number>>
+  editTimes?: Record<string, number>
+  logged?: string[]
 }
 
 const line = (row: object) => JSON.stringify(row)
@@ -33,27 +39,42 @@ const engine = (on: On, world: World) => {
   on('command.register', () => ({ value: { command: 'tabs' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('fs.write', ($, e) => {
+    if (e.path.includes('/tab-edits/')) {
+      ;(world.logged ??= []).push(e.text)
+      return { value: undefined }
+    }
     const name = e.path.slice(DIR.length + 1)
     ;(world.wrote[name] ??= []).push(e.text)
     return { value: undefined }
   })
-  on('fs.exists', () => ({ value: false }))
-  on('fs.list', () => ({
-    value: Object.keys(world.records).map(name => ({
+  on('fs.exists', ($, e) => ({ value: world.note !== undefined && e.path === '/home/test/.claude/tab-triage/send/a.json' }))
+  on('prompt.submit', ($, e) => {
+    world.sent.push({ text: e.text, ...(e.origin.kind === 'plugin' && e.origin.asUser ? { asUser: true as const } : {}) })
+    return { text: e.text }
+  })
+  on('fs.list', ($, e) => ({
+    value: (e.path.endsWith('/.vscode/extensions') ? (world.hasSideBar ? ['hcmnj.progress-sidebar-0.1.0'] : ['some.other-1.0.0']) : e.path.endsWith('/tab-edits') ? Object.keys(world.edits ?? {}) : Object.keys(world.records)).map(name => ({
       name,
       kind: 'file' as const,
       size: 100,
-      mtimeMs: name === 'e.json' ? NOW - 600_000 : NOW,
+      mtimeMs: e.path.endsWith('/tab-edits') ? (world.editTimes?.[name] ?? NOW) : name === 'e.json' ? NOW - 600_000 : NOW,
       isLink: false,
     })),
   }))
   on('fs.read', ($, e) => {
+    if (e.path.includes('/tab-triage/send/')) return { value: JSON.stringify(world.note) }
+    if (e.path.includes('/tab-edits/')) {
+      const theirs = world.edits?.[e.path.slice(e.path.lastIndexOf('/') + 1)]
+      if (theirs === undefined) throw new Error('ENOENT')
+      return { value: typeof theirs === 'string' ? theirs : JSON.stringify(theirs) }
+    }
     const record = world.records[e.path.slice(DIR.length + 1)]
     if (record === undefined) throw new Error('ENOENT')
     return { value: JSON.stringify(record) }
   })
   on('process.run', ($, e) => {
     world.ran.push([...e.argv])
+    if (e.argv[0] === 'rm' && e.argv[1]?.includes('/tab-triage/send/')) world.note = undefined
     const answers: Record<string, string> = {
       grep: line({ type: 'ai-title', aiTitle: 'Tab board for VS Code' }),
       tail: world.transcript,
@@ -88,6 +109,8 @@ const world = (patch: Partial<World> = {}): World => ({
   openTabs: '',
   records: RECORDS,
   found: '[]',
+  hasSideBar: false,
+  sent: [],
   ...patch,
 })
 const last = (w: World, name = 'a.json') =>
@@ -141,6 +164,42 @@ test('the band names the tabs that want you, counts the rest, and jumps', async 
   await ui.press({ key: 'go-b' })
   expect(w.ran.at(-1)).toEqual(['open', 'vscode://anthropic.claude-code/open?session=b'])
   await ui.unmount()
+})
+
+test('with the side bar extension installed the band steps aside, and /tabs still works', async ($, on) => {
+  engine(on, world({ hasSideBar: true }))
+  // Stands for the engine's own drawing, which is all that is left once the band steps aside.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>the prompt's own</Text>
+  })
+  await $.session.start({ cwd: '/x/work', surface: 'vscode', isInteractive: true })
+
+  const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
+  expect(await band.find({ type: 'Text', text: /the prompt's own/ })).toBeDefined()
+  expect(await band.find({ key: 'all-tabs' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: /Needs you/ })).toBeUndefined()
+  await band.unmount()
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(await pane.find({ key: 'open-b' })).toBeDefined()
+  await pane.unmount()
+})
+
+test('with the side bar, a new thread is told how to report a long job, and only then', async ($, on) => {
+  const w = world({ hasSideBar: false })
+  engine(on, w)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hello', scope: 'shared' as const }] }))
+  const ids = async (surfaces: readonly ('vscode' | 'terminal')[]) =>
+    (await $.prompt.compose({ surfaces, model: 'm', promptModel: 'm', tools: [], outputStyle: null, traits: [] })).sections.map(section => section.id)
+
+  await $.session.start({ cwd: '/x/work', surface: 'vscode', isInteractive: true })
+  expect(await ids(['vscode'])).toEqual(['intro'])
+
+  w.hasSideBar = true
+  await $.session.start({ cwd: '/x/work', surface: 'vscode', isInteractive: true })
+  expect(await ids(['vscode'])).toEqual(['intro', 'tab-board:long-jobs'])
+  expect(await ids([])).toEqual(['intro'])
 })
 
 test('the pane splits a tab waiting on you from one ready to close', async ($, on) => {
@@ -198,6 +257,17 @@ test('a turn that leaves more to do is a step, with what is next', async ($, on)
   expect(w.asked.at(-1)).toMatch(/build the tab board/)
   const notice = w.ran.find(argv => argv[0] === 'osascript')
   expect(notice?.[2]).toMatch(/Your move/)
+})
+
+test('with the side bar, a long turn ending makes no sound: the side bar decides what is worth one', async ($, on) => {
+  const w = world({ hasSideBar: true, verdict: '{"kind":"waiting","note":"Run the settings command"}' })
+  const clock = engine(on, w)
+  await $.session.start({ cwd: '/x/work', surface: 'vscode', isInteractive: true })
+  await $.turn.start({ text: 'build the tab board', turnId: 't1' })
+  await $.turn.complete({ reason: 'answer', answer: 'Built it. Paste the command below.', durationMs: 90_000, isAborted: false, turnId: 't1' })
+  await clock.settle()
+  expect(last(w).state).toBe('step')
+  expect(w.ran.find(argv => argv[0] === 'osascript')).toBeUndefined()
 })
 
 test('a turn that wraps the job up is ready to close', async ($, on) => {
@@ -345,7 +415,7 @@ test('a search finds the tab where the words were said, whatever its name', asyn
     const ui = await $.ui.mount({ ...PANE, surface })
     await ui.input({ key: 'search', text: 'payroll' })
     expect(await ui.find({ type: 'Text', text: /2 tabs mention “payroll”/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /payroll run is due/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /the payroll run is due/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /said 8 times · not open/ })).toBeDefined()
     // the board steps aside while the search shows
     expect(await ui.find({ key: 'clear-c' })).toBeUndefined()
@@ -378,4 +448,153 @@ test('/tabs with words searches, and says when nothing was found', async ($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   expect(await ui.find({ type: 'Text', text: /No tab mentions “zebra”, open or from the last 7 days/ })).toBeDefined()
   await ui.unmount()
+})
+
+const WAITING = NOW - 5000
+const waitingOnYou = { ...RECORDS, 'a.json': { id: 'a', title: 'Deploy', cwd: '/x/work', state: 'step', detail: 'Next: Ship it?', since: WAITING, beat: NOW, v: 2 } }
+const started = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, w: World) => {
+  const clock = engine(on, w)
+  await $.session.start({ cwd: '/x/work', surface: 'vscode', isInteractive: true })
+  return clock
+}
+
+test('a press of Ship it goes in once, as the person, and the note is gone', async ($, on) => {
+  const w = world({ hasSideBar: true, records: waitingOnYou })
+  const clock = await started($, on, w)
+  w.note = { kind: 'ship', since: WAITING, at: NOW }
+  await clock.advance(2000)
+  await clock.advance(2000)
+  expect(w.sent).toEqual([{ text: 'ship it', asUser: true }])
+  expect(w.note).toBe(undefined)
+})
+
+test('a note can only pick the words, never bring its own', async ($, on) => {
+  const w = world({ hasSideBar: true, records: waitingOnYou })
+  const clock = await started($, on, w)
+  w.note = { kind: 'say', text: 'rm everything', since: WAITING, at: NOW }
+  await clock.advance(2000)
+  expect(w.sent).toEqual([])
+})
+
+test('a chat that has moved on since the press sends nothing and leaves the note for the side bar to see', async ($, on) => {
+  const w = world({ hasSideBar: true, records: waitingOnYou })
+  const clock = await started($, on, w)
+  w.note = { kind: 'ship', since: WAITING - 1, at: NOW }
+  await clock.advance(2000)
+  expect(w.sent).toEqual([])
+  expect(w.note).not.toBe(undefined)
+})
+
+test('a note left over from a reload is thrown away, not sent', async ($, on) => {
+  const w = world({ hasSideBar: true, records: waitingOnYou })
+  const clock = await started($, on, w)
+  w.note = { kind: 'ship', since: WAITING, at: NOW - 61_000 }
+  await clock.advance(2000)
+  expect(w.sent).toEqual([])
+  expect(w.note).toBe(undefined)
+})
+
+test('after a command runs, the chat hears how it went', async ($, on) => {
+  const w = world({ hasSideBar: true, records: waitingOnYou })
+  const clock = await started($, on, w)
+  w.note = { kind: 'ran', code: 3, since: WAITING, at: NOW }
+  await clock.advance(2000)
+  expect(w.sent[0]?.text).toContain('failed with exit code 3')
+})
+
+test('without the side bar, nothing looks for notes', async ($, on) => {
+  const w = world({ hasSideBar: false, records: waitingOnYou })
+  const clock = await started($, on, w)
+  w.note = { kind: 'ship', since: WAITING, at: NOW }
+  await clock.advance(5000)
+  expect(w.sent).toEqual([])
+})
+
+const EDITED = '/x/site/view.js'
+const edit = (file = EDITED) => ({ tool: 'Edit' as const, file_path: file, old_string: 'a', new_string: 'b', replace_all: false })
+const notes = (result: unknown) => (result as { context?: readonly string[] }).context ?? []
+type Started = Parameters<Parameters<typeof test>[1]>[0]
+const crossed = (_: Started, on: On) => on('tool.call', () => ({ result: {} }))
+
+test('a chat that edits a file another chat just edited hears who, by name', async ($, on) => {
+  const w = world({ edits: { 'b.json': { [EDITED]: NOW - 180_000 } } })
+  crossed($, on)
+  await started($, on, w)
+  const [note] = notes(await $.tool.call(edit()))
+  expect(note?.includes(EDITED)).toBe(true)
+  expect(note?.includes('"Fix the invoice email" (3 minutes ago, still working)')).toBe(true)
+  expect(note?.includes('Re-read the file')).toBe(true)
+})
+
+test('a chat with no heartbeat is named as stopped, not working', async ($, on) => {
+  const w = world({ edits: { 'e.json': { [EDITED]: NOW - 60_000 } } })
+  crossed($, on)
+  await started($, on, w)
+  const [note] = notes(await $.tool.call(edit()))
+  expect(note?.includes('"Old closed tab" (1 minute ago, stopped for now)')).toBe(true)
+})
+
+test('it says so once, and again only for a newer edit after 10 minutes', async ($, on) => {
+  const w = world({ edits: { 'b.json': { [EDITED]: NOW - 60_000 } } })
+  crossed($, on)
+  const clock = await started($, on, w)
+  expect(notes(await $.tool.call(edit())).length).toBe(1)
+  expect(notes(await $.tool.call(edit())).length).toBe(0)
+  w.edits = { 'b.json': { [EDITED]: NOW + 1000 } }
+  expect(notes(await $.tool.call(edit())).length).toBe(0)
+  await clock.advance(10 * 60_000 + 1000)
+  expect(notes(await $.tool.call(edit())).length).toBe(1)
+  await clock.advance(10 * 60_000 + 1000)
+  expect(notes(await $.tool.call(edit())).length).toBe(0)
+})
+
+test('nothing is said for an old edit, another file, its own edit, or scratch space', async ($, on) => {
+  const w = world({
+    edits: {
+      'a.json': { [EDITED]: NOW - 1000 },
+      'b.json': { [EDITED]: NOW - 31 * 60_000, '/x/site/other.js': NOW - 1000, '/private/tmp/s.txt': NOW - 1000 },
+    },
+  })
+  crossed($, on)
+  await started($, on, w)
+  expect(notes(await $.tool.call(edit())).length).toBe(0)
+  expect(notes(await $.tool.call(edit('/private/tmp/s.txt'))).length).toBe(0)
+  expect(w.logged?.some(text => text.includes('/private/tmp/s.txt'))).toBe(false)
+})
+
+test('a list nobody has touched in 30 minutes is not even read', async ($, on) => {
+  const w = world({ edits: { 'b.json': { [EDITED]: NOW - 1000 } }, editTimes: { 'b.json': NOW - 31 * 60_000 } })
+  crossed($, on)
+  await started($, on, w)
+  expect(notes(await $.tool.call(edit())).length).toBe(0)
+})
+
+test('the edit goes on the list another chat reads, and a refused edit does not', async ($, on) => {
+  const w = world({ edits: {} })
+  let refuse = true
+  on('tool.call', () => (refuse ? { deny: 'no' } : { result: {} }))
+  await started($, on, w)
+  await $.tool.call(edit())
+  expect(w.logged ?? []).toEqual([])
+  refuse = false
+  await $.tool.call(edit())
+  expect(JSON.parse(w.logged?.at(-1) ?? '{}')[EDITED]).toBe(NOW)
+})
+
+test('a broken list from another chat never gets in the way of an edit', async ($, on) => {
+  const w = world({ edits: { 'b.json': 'not json' as unknown as Record<string, number>, 'd.json': { [EDITED]: NOW - 1000 } } })
+  crossed($, on)
+  await started($, on, w)
+  const ran = await $.tool.call(edit())
+  expect(notes(ran).length).toBe(1)
+  expect(notes(ran)[0]?.includes('"Landing page"')).toBe(true)
+})
+
+test('other tools pass through with nothing written', async ($, on) => {
+  const w = world({ edits: { 'b.json': { [EDITED]: NOW - 1000 } } })
+  crossed($, on)
+  await started($, on, w)
+  const ran = await $.tool.call({ tool: 'Read', file_path: EDITED })
+  expect(notes(ran).length).toBe(0)
+  expect(w.logged ?? []).toEqual([])
 })
