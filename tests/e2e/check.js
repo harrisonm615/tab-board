@@ -156,7 +156,8 @@ async function windowsChecks(core, gauges, first, env, question) {
   const winsys = code => childProcess.spawnSync(python[0], [...python.slice(1), '-I', '-c', `import sys; sys.path.insert(0, sys.argv[1]); import winsys\n${code}`, sideBar], { encoding: 'utf8', windowsHide: true })
   const theirs = /const TOAST_PS = String\.raw`([\s\S]*?)`/.exec(fs.readFileSync(path.join(repo, 'hooks', 'register.tsx'), 'utf8'))
   const ours = winsys('import json; print(json.dumps(winsys.TOAST_PS))')
-  check("the plugin's notice is the same script as the side bar's", Boolean(theirs) && JSON.parse(ours.stdout || '""') === theirs[1], ours.stderr.slice(0, 200))
+  // A checkout on Windows can have Windows line ends; the plugin itself reads its template with plain ones
+  check("the plugin's notice is the same script as the side bar's", Boolean(theirs) && JSON.parse(ours.stdout || '""') === theirs[1].replace(/\r\n/g, '\n'), ours.stderr.slice(0, 200))
   const app = winsys('print(winsys.notice_app())').stdout.trim()
   const shown = winsys("print(winsys.notice('Shop sign', 'Your move', 'Red or blue? Café sign', 'vscode://anthropic.claude-code/open?session=test', 'tab-test'))")
   const inHistory = tag => {
@@ -165,11 +166,16 @@ async function windowsChecks(core, gauges, first, env, question) {
   }
   check('a side bar notice shows in Windows notifications', shown.stdout.trim() === 'True' && inHistory('tab-test') === '1', `${app}: ${shown.stdout.trim()} ${shown.stderr.slice(0, 200)} history ${inHistory('tab-test')}`)
 
-  // The plugin's own notice, from a real chat that asks with Claude's question tool. A headless chat can't be answered, so it's stopped after a while
-  childProcess.spawnSync(claude, ['-p', 'Ask with a tool'], { cwd: project, env, encoding: 'utf8', timeout: 60_000, windowsHide: true })
-  const boardDir = path.join(os.homedir(), '.claude', 'tab-board')
-  const asked = fs.readdirSync(boardDir).filter(name => /^[0-9a-f-]{36}\.json$/.test(name)).map(name => JSON.parse(fs.readFileSync(path.join(boardDir, name), 'utf8'))).find(one => one.title === 'Ask with a tool')
-  check("the plugin's notice shows when a chat asks you something", Boolean(asked) && inHistory(asked.id) === '1', asked ? `${asked.state}: ${asked.detail}; history ${inHistory(asked.id)}` : 'no record')
+  // The plugin's own notice: with no side bar, a long turn that ends on a question gets one. This chat runs from a home folder with
+  // no side bar in it, and the same Claude settings and plugins
+  const bare = path.join(os.tmpdir(), 'home-without-side-bar')
+  fs.mkdirSync(bare, { recursive: true })
+  const alone = { ...env, USERPROFILE: bare, HOME: bare, CLAUDE_CONFIG_DIR: path.join(os.homedir(), '.claude') }
+  const slow = childProcess.spawnSync(claude, ['-p', 'Take your time'], { cwd: project, env: alone, encoding: 'utf8', timeout: 180_000, windowsHide: true })
+  const bareBoard = path.join(bare, '.claude', 'tab-board')
+  const records = fs.existsSync(bareBoard) ? fs.readdirSync(bareBoard).filter(name => /^[0-9a-f-]{36}\.json$/.test(name)) : []
+  const asked = records.map(name => JSON.parse(fs.readFileSync(path.join(bareBoard, name), 'utf8'))).find(one => one.title === 'Take your time')
+  check("the plugin's notice shows when a long chat ends by asking you something", Boolean(asked) && inHistory(asked.id) === '1', asked ? `${asked.state}: ${asked.detail}; history ${inHistory(asked.id)}` : `no record: ${(slow.stdout || slow.stderr || '').slice(0, 200)}`)
 }
 
 // Run once VS Code is open with a chat running a long job inside it (see open-panel): the side bar has to name that chat as what a reload would stop
