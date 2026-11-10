@@ -238,7 +238,7 @@ class Provider {
     this.loaderFolder = loaderFolder
     this.update = { available: undefined, pending: false, busy: false }
     this.busy = { tabs: false, jobs: false, usage: false, gauges: false }
-    this.meters = new Gauges()
+    this.meters = new Gauges({ python: [PYTHON, ...PYTHON_ARGS] })
     this.speed = { busy: false, failed: false, last: context.globalState.get('speedTest') }
     this.lastTabs = ''
     this.ticket = 0
@@ -291,6 +291,7 @@ class Provider {
   // Lets go of the panel, so a newer copy can take it over or it can close.
   stop() {
     this.letGo?.()
+    this.meters.stop() // Windows: its meters helper. It would end by itself a minute later anyway
   }
 
   // Not a moment to swap this copy out: the result of what's underway would have nowhere to go.

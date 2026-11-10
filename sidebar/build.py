@@ -9,7 +9,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 meta = json.loads((HERE / "package.json").read_text())
-FILES = ["package.json", "extension.js", "core.js", "prune.js", "ship.js", "gauges.js", "collect.py", "eta.py", "triage.py", "usage.py", "README.md", "media/view.js", "media/view.css", "media/icon.svg"]
+FILES = ["package.json", "extension.js", "core.js", "prune.js", "ship.js", "gauges.js", "collect.py", "winsys.py", "eta.py", "triage.py", "usage.py", "README.md", "media/view.js", "media/view.css", "media/icon.svg"]
 MANIFEST = f"""<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>

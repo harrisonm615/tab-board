@@ -1,5 +1,8 @@
 // Draws the side bar from what extension.js sends. Everything shown goes in with textContent, since titles and snippets are chat text.
 const vscode = acquireVsCodeApi()
+// The panel's words follow the computer: Windows has no ⌘Q, and its meters come from different places.
+const ON_WINDOWS = /^Win/.test(navigator.platform || '')
+const THIS = ON_WINDOWS ? 'this PC' : 'this Mac'
 const list = document.getElementById('list')
 const counts = document.getElementById('counts')
 const box = document.getElementById('search')
@@ -438,7 +441,8 @@ document.addEventListener('keydown', event => {
 
 // Sent only if there's a personal script that sends "apps". One app per click; nothing here closes several at once (his ask, Nov 5).
 function closeApp(app) {
-  const button = action('×', `Close ${app.name}. It asks it to quit, as ⌘Q does. If it has unsaved work, it asks you first.`, () => {
+  const how = ON_WINDOWS ? 'It closes its windows, as clicking their X does' : 'It asks it to quit, as ⌘Q does'
+  const button = action('×', `Close ${app.name}. ${how}. If it has unsaved work, it asks you first.`, () => {
     button.textContent = '…'
     button.disabled = true
     vscode.postMessage({ type: 'quit', ids: [app.id] })
@@ -452,7 +456,7 @@ function overloadBanner() {
   const banner = el('div', 'alarm', jobs.mac.detail)
   if (jobs.apps && jobs.apps.rows.length > 0) {
     const wrap = el('div', 'alarm-apps')
-    const press = action(`See open apps · ${jobs.apps.rows.length}`, 'Drops down the apps open on this Mac. Each has its own × to close it.', () => {
+    const press = action(`See open apps · ${jobs.apps.rows.length}`, `Drops down the apps open on ${THIS}. Each has its own × to close it.`, () => {
       appsOpen = !appsOpen
       remember()
       draw()
@@ -465,7 +469,7 @@ function overloadBanner() {
   return banner
 }
 
-// The other apps open on this Mac, under the Mac's meters, since they're how to act on them. Finder and this window aren't offered.
+// The other apps open on this Mac or PC, under its meters, since they're how to act on them. Finder or File Explorer, and this window, aren't offered.
 // It keeps its own fold, apart from the list's accordion, and its own scrolling, so a long list can't fill the top block.
 function drawApps() {
   const before = appsBox.querySelector('.apps-list')
@@ -473,13 +477,16 @@ function drawApps() {
   appsBox.replaceChildren()
   const apps = jobs && jobs.apps
   if (!apps || apps.rows.length === 0) return
-  const tip = "Other apps open on this Mac, busiest first, with their share of the Mac's CPU and their memory. × asks one to quit, as ⌘Q does."
+  const tip = ON_WINDOWS
+    ? "Other apps open on this PC, busiest first, with their share of the PC's CPU and their memory. × closes one's windows, as clicking their X does."
+    : "Other apps open on this Mac, busiest first, with their share of the Mac's CPU and their memory. × asks one to quit, as ⌘Q does."
   // A small title over its own list, so it doesn't read as one of the list's sections.
   const head = el('button', 'mini-head')
   head.id = 'sec-apps'
   head.title = tip
   head.setAttribute('aria-expanded', String(appsOpen))
-  head.append(el('span', 'mini-label', `Open apps · ${apps.rows.length}`), chev(appsOpen), el('span', `mini-note ${jobs.mac.warn ? 'text-warn' : ''}`, `load ${jobs.mac.load}`))
+  head.append(el('span', 'mini-label', `Open apps · ${apps.rows.length}`), chev(appsOpen))
+  if (!ON_WINDOWS) head.append(el('span', `mini-note ${jobs.mac.warn ? 'text-warn' : ''}`, `load ${jobs.mac.load}`)) // Windows has no load figure
   head.addEventListener('click', () => {
     appsOpen = !appsOpen
     remember()
@@ -995,7 +1002,7 @@ function linkRow(link) {
   const status = el('span', 'net-wide net-status')
   let tip = ''
   if (link.kind === 'Offline') status.append(dot('bad'), el('span', 'text-bad', 'Not connected'))
-  else if (link.rate) {
+  else if (link.rate && known(link.rssi)) {
     const signal = signalOf(link.rssi)
     status.append(signalBars(signal), el('span', `text-${signal.tone}`, `${signal.word} signal`))
     tip = `Wi-Fi signal: ${signal.word.toLowerCase()} (${link.rssi} dBm)${link.band ? ` on ${link.band}` : ''}. Green is fine, orange is costing some speed, red is close to dropping.\nSending at ${link.rate} Mbps this moment, which drops when there's little to send, so it isn't a speed limit.`
@@ -1006,7 +1013,7 @@ function linkRow(link) {
 }
 
 function usingRow(net) {
-  const tip = known(net) ? `Going through this Mac right now, in megabits a second: ${mbps(net.down)} down, ${mbps(net.up)} up.` : ''
+  const tip = known(net) ? `Going through ${THIS} right now, in megabits a second: ${mbps(net.down)} down, ${mbps(net.up)} up.` : ''
   const label = tipped(el('span', 'net-label', 'Using now'), tip)
   if (!known(net)) return [label, el('span', 'net-wide', '…')]
   const number = (arrow, value) => tipped(el('span', value >= 0.05 ? 'net-num text-working' : 'net-num', `${arrow} ${mbps(value)}`), tip)
@@ -1031,7 +1038,7 @@ function netTable() {
   const link = gauges.link || {}
   const table = el('div', 'net')
   table.append(...linkRow(link))
-  if (link.kind !== 'Offline') table.append(...usingRow(gauges.net), ...speedRow())
+  if (link.kind !== 'Offline') table.append(...usingRow(gauges.net), ...(ON_WINDOWS ? [] : speedRow())) // Windows has no speed test of its own
   return table
 }
 
@@ -1055,7 +1062,10 @@ function drawGauges() {
     ? `CPU: ${known(gauges.cpu) ? `${Math.round(gauges.cpu)}% of everything the PC has` : 'reading…'}.\nOrange from 70%, red from 90%.`
     : `CPU: ${known(gauges.cpu) ? `${Math.round(gauges.cpu)}% of everything the Mac has` : 'reading…'}.\nSystem load ${gauges.load}. Heavy jobs start taking turns over 70, and the Mac counts as overloaded over 100.\nOrange from 70%, red from 90%.`
   grid.append(gaugeCell('CPU', percentWords(gauges.cpu), gauges.cpu, busyTone(gauges.cpu), cpuTip))
-  if (known(gauges.gpu)) grid.append(gaugeCell('GPU', percentWords(gauges.gpu), gauges.gpu, busyTone(gauges.gpu), `GPU: ${gauges.gpu}% busy. Hardware video encoding runs on its own chip and mostly doesn't show here, so a render can be going with this low.\nOrange from 70%, red from 90%.`))
+  const gpuTip = isWindows
+    ? `GPU: ${gauges.gpu}% busy, going by its busiest part, the way Task Manager counts it. Video encoding is one of those parts, so a render shows here.\nOrange from 70%, red from 90%.`
+    : `GPU: ${gauges.gpu}% busy. Hardware video encoding runs on its own chip and mostly doesn't show here, so a render can be going with this low.\nOrange from 70%, red from 90%.`
+  if (known(gauges.gpu)) grid.append(gaugeCell('GPU', percentWords(gauges.gpu), gauges.gpu, busyTone(gauges.gpu), gpuTip))
   const memory = gauges.memory
   if (memory) {
     const tone = { warning: 'warn', critical: 'bad' }[memory.pressure] || 'ok'
@@ -1067,7 +1077,7 @@ function drawGauges() {
   gaugeBox.append(grid)
   // Open apps sits between these two boxes (his order, Nov 5): meters, apps, storage, Wi-Fi last.
   if (gauges.disks && gauges.disks.length > 0) lowerBox.append(diskGrid())
-  if (gauges.link) lowerBox.append(netTable()) // Windows has no network line
+  if (gauges.link) lowerBox.append(netTable())
 }
 
 function draw() {

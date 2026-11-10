@@ -606,6 +606,30 @@ test('other tools pass through with nothing written', async ($, on) => {
   expect(w.logged ?? []).toEqual([])
 })
 
+test('on Windows a long turn ending is a Windows notice, through Windows PowerShell, that opens the chat when clicked', async ($, on) => {
+  const w = world({ verdict: '{"kind":"waiting","note":"Pick \\"red\\" & <blue>"}' })
+  const clock = engine(on, w, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\test', LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local', SystemRoot: 'C:\\Windows', APPDATA: 'C:\\Users\\test\\AppData\\Roaming' })
+  await $.session.start({ cwd: 'C:\\x\\work', surface: 'vscode', isInteractive: true })
+  await $.turn.start({ text: 'design the shop sign', turnId: 't1' })
+  await $.turn.complete({ reason: 'answer', answer: 'Which color should it be, red or blue?', durationMs: 90_000, isAborted: false, turnId: 't1' })
+  await clock.settle()
+
+  expect(w.ran.find(argv => argv[0] === 'osascript' || argv[0] === '/opt/homebrew/bin/terminal-notifier')).toBeUndefined()
+  const run = w.ran.find(argv => (argv[0] ?? '').endsWith('powershell.exe'))
+  expect(run?.[0]).toBe('C:\\Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
+  expect(run?.slice(1, 4)).toEqual(['-NoProfile', '-NonInteractive', '-EncodedCommand'])
+  const bytesOf = (text: string) => Uint8Array.from(atob(text), char => char.charCodeAt(0))
+  const wide = bytesOf(run?.[4] ?? '')
+  let script = ''
+  for (let i = 0; i + 1 < wide.length; i += 2) script += String.fromCharCode((wide[i] ?? 0) | ((wide[i + 1] ?? 0) << 8))
+  expect(script).toContain("$toast.Tag = 'a'")
+  // No VS Code Start menu entry in this made-up PC, so it goes out under Windows PowerShell's own name, which every PC has
+  expect(script).toContain(String.raw`CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)`)
+  const xml = new TextDecoder().decode(bytesOf(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/.exec(script)?.[1] ?? ''))
+  expect(xml).toContain('<toast activationType="protocol" launch="vscode://anthropic.claude-code/open?session=a">')
+  expect(xml).toContain('<text>Tab board for VS Code</text><text>Your move</text><text>Next: Pick &quot;red&quot; &amp; &lt;blue&gt;</text>')
+})
+
 test('on Windows the Unix tools are Python, the records land in the home folder, and a jump opens through Explorer', async ($, on) => {
   const w = world({ transcript: line({ type: 'user', cwd: 'C:\\x\\work', timestamp: new Date(NOW - 5_000).toISOString(), message: { content: 'hello' } }) })
   engine(on, w, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\test', LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local', SystemRoot: 'C:\\Windows' })

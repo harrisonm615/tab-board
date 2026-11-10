@@ -51,6 +51,13 @@ STALE_MINUTES = 30     # a running card untouched this long probably stopped wit
 
 # ---------- Which chat a job card belongs to: the one that last wrote it, going by the chats' own tool calls ----------
 CARD_PATH = re.compile(r"\.claude[/\\]+progress[/\\]+([\w.-]+)\.json")   # either slash: Windows paths have backslashes
+def windows():
+    """winsys.py beside this file: Windows' process list, Open apps and notices, read through Windows' own libraries."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I leaves this folder off the path
+    import winsys
+    return winsys
+
+
 CHAT_SCAN_SECONDS = 8                  # the first look reads over a GB of chats. Whatever's left waits for the next look
 CHAT_KEEP_DAYS = 30                    # Claude Code deletes a chat after about this long, so the link would go nowhere
 
@@ -201,6 +208,22 @@ def personal(args):
         return json.loads(out) if out.strip() else {}
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}
+
+
+def windows_apps():
+    """Windows: the apps open on this PC, with their × buttons. A Mac gets these from a personal script, if it has one.
+    Each app's CPU time is kept from one look to the next, so its share is what it's using now, not since it opened."""
+    if not IS_WINDOWS:
+        return None
+    sample_file = SORT_FOLDER / "apps-cpu.json"
+    apps, sample = windows().open_apps(read_json(sample_file))
+    if sample:
+        try:
+            SORT_FOLDER.mkdir(exist_ok=True)
+            sample_file.write_text(json.dumps(sample))
+        except OSError:
+            pass
+    return apps
 
 
 def mac():
@@ -749,11 +772,12 @@ def start_triage(rows, store):
 
 
 def ping(row, heading):
-    """A macOS notice that opens the tab when clicked. None on Windows yet: the tile is still there."""
+    """A notice that opens the tab when clicked: macOS's, or on Windows a Windows notification."""
+    url = f"vscode://anthropic.claude-code/open?session={row['id']}"
     if IS_WINDOWS:
+        windows().notice(row["title"], heading, row["note"][:180], url, row["id"])
         return
     body = f"​{row['note']}"[:180]     # the blank first character stops text starting with "-" being read as an option
-    url = f"vscode://anthropic.claude-code/open?session={row['id']}"
     notifier = shutil.which("terminal-notifier") or "/opt/homebrew/bin/terminal-notifier"
     try:
         sent = os.path.exists(notifier) and subprocess.run(
@@ -860,6 +884,7 @@ def mark_seen(tab_id, since):
 JOB_MIN_S = 15      # anything younger is likely a quick command, not a job
 STARTUP_S = 30      # what a chat starts in its first moments is its own helpers, not work
 POLLING = re.compile(r"watch|wait|monitor", re.I)
+VS_CODE = re.compile(r"Visual Studio Code|/Microsoft VS Code( Insiders)?/")   # the Mac's app, or Windows' install folder
 HEAVY = {"ffmpeg", "whisper", "whisper-cli", "demucs", "rclone", "rsync"}   # real work however little CPU it's getting at the moment
 WATCHER_CPU = 30    # a watcher using a little CPU between sleeps is still a watcher. Without this, the reload light blinked each time one checked in
 
@@ -874,7 +899,7 @@ def etime_s(text):
 
 
 def base(word):
-    return word.rsplit("/", 1)[-1]
+    return re.split(r"[/\\]", word)[-1]
 
 
 def program_names(cmd):
@@ -891,20 +916,33 @@ def only_watching(members):
     return "sleep" in names or bool(POLLING.search(" ".join(names)))
 
 
-def chat_commands(ps_text, session_of):
-    """One row per chat with real work running. A loop that only sleeps and checks isn't work: it's nothing to lose, and they'd never let a reload look safe.
-    Claude Code run outside VS Code (an AI cut started by launchd, say) survives a reload, so it doesn't count."""
-    procs, kids = {}, {}
+def ps_table(ps_text):
+    procs = {}
     for line in ps_text.splitlines():
         m = re.match(r"\s*(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+(.*)", line)
         if m:
             procs[int(m[1])] = {"parent": int(m[2]), "secs": etime_s(m[3]), "cpu": float(m[4]), "cmd": m[5]}
-            kids.setdefault(int(m[2]), []).append(int(m[1]))
+    return procs
+
+
+def where(proc):
+    """A process's program and command together, with forward slashes: Windows keeps the program's path apart from its command."""
+    return f"{proc.get('path', '')} {proc['cmd']}".replace("\\", "/")
+
+
+def chat_commands(ps_text, session_of):
+    """One row per chat with real work running. A loop that only sleeps and checks isn't work: it's nothing to lose, and they'd never let a reload look safe.
+    Claude Code run outside VS Code (an AI cut started by launchd, say) survives a reload, so it doesn't count.
+    ps_text is ps's output on a Mac, or on Windows the table winsys.processes() reads."""
+    procs = ps_table(ps_text) if isinstance(ps_text, str) else ps_text
+    kids = {}
+    for pid, proc in procs.items():
+        kids.setdefault(proc["parent"], []).append(pid)
     def under_vscode(pid):
         seen = set()
         while pid in procs and pid not in seen:
             seen.add(pid)
-            if "Visual Studio Code" in procs[pid]["cmd"]:
+            if VS_CODE.search(where(procs[pid])):
                 return True
             pid = procs[pid]["parent"]
         return False
@@ -917,17 +955,17 @@ def chat_commands(ps_text, session_of):
         return out
     chats = {}
     for pid, chat in procs.items():
-        if "/native-binary/claude" not in chat["cmd"] or not under_vscode(pid):
+        if "/native-binary/claude" not in where(chat) or not under_vscode(pid):
             continue
         for child in kids.get(pid, []):
             job = procs[child]
             members = [procs[p] for p in family(child)]
-            a_command = any("shell-snapshots" in m["cmd"] for m in members)   # the chat ran this on purpose. Its own helpers don't look like this
+            a_command = any("shell-snapshots" in where(m) for m in members)   # the chat ran this on purpose. Its own helpers don't look like this
             if job["secs"] < JOB_MIN_S or (chat["secs"] - job["secs"] < STARTUP_S and not a_command):
                 continue
             if sum(m["cpu"] for m in members) < WATCHER_CPU and only_watching(members):
                 continue
-            doing = next((m["cmd"] for m in members if "shell-snapshots" not in m["cmd"]), None)
+            doing = next((m["cmd"] for m in members if "shell-snapshots" not in where(m)), None)
             if doing is None:          # a shell with nothing under it, between steps of a loop
                 continue
             sid = session_of.get(pid, "")
@@ -938,11 +976,14 @@ def chat_commands(ps_text, session_of):
 
 def reload_work():
     if IS_WINDOWS:
-        return None                    # no ps to read the process tree with: can't tell, so it says nothing
-    try:
-        out = subprocess.run(["ps", "-Awwo", "pid=,ppid=,etime=,pcpu=,command="], capture_output=True, text=True, timeout=15).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None                    # can't tell: better to say nothing than "safe"
+        out = windows().processes()    # Windows has no ps: the same table, from Windows itself
+        if not out:
+            return None                # can't tell: better to say nothing than "safe"
+    else:
+        try:
+            out = subprocess.run(["ps", "-Awwo", "pid=,ppid=,etime=,pcpu=,command="], capture_output=True, text=True, timeout=15).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None                # can't tell: better to say nothing than "safe"
     session_of = {}
     for path in glob.glob(str(HOME / ".claude/sessions/*.json")):
         d = read_json(path)
@@ -1172,11 +1213,14 @@ if __name__ == "__main__":
         mark_closed(sys.argv[2], " ".join(sys.argv[3:]))
     elif command == ["unclosed"]:
         mark_reopening(sys.argv[2])
+    elif command == ["quit"] and IS_WINDOWS:
+        offered = {app["id"] for app in (windows_apps() or {"rows": []})["rows"]}
+        windows().quit_apps([i for i in sys.argv[2:] if i in offered])
     elif command:
         personal(sys.argv[1:])
     else:
         mine = personal([])
         groups = (mine.get("groups") or []) + cards()
         print(json.dumps({"updated": time.time(), "groups": groups, "total": safely(lambda: job_times(groups, mine.get("priority"))),
-                          "mac": mine.get("mac") or mac(), "priority": mine.get("priority"), "apps": mine.get("apps"),
+                          "mac": mine.get("mac") or mac(), "priority": mine.get("priority"), "apps": mine.get("apps") or safely(windows_apps),
                           "reload": safely(reload_work), "overlap": safely(overlaps, [])}))

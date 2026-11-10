@@ -258,6 +258,69 @@ const removeFiles = async ($: Engine, paths: readonly string[], strict: boolean)
 
 const openUrl = ($: Engine, url: string) => $.process.run(isWindows ? ['explorer.exe', url] : ['open', url])
 
+// Windows notices go through Windows PowerShell, which every Windows has, since nothing else reaches Windows' notifications without an install.
+// The same words as the side bar's copy in sidebar/winsys.py, which the Windows test checks. {XML} is base64, so nothing in a chat's title
+// can end a quote; {TAG} is the chat's id and {APP} one of the two names below.
+const TOAST_PS = String.raw`$ErrorActionPreference = 'Stop'
+$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{XML}')))
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+$toast.Tag = '{TAG}'
+$toast.Group = 'tab-board'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{APP}').Show($toast)`
+const VS_CODE_APP = 'Microsoft.VisualStudioCode' // shown as Visual Studio Code, with its icon, when its Start menu entry is there
+const POWERSHELL_APP = String.raw`{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`
+
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+const base64 = (bytes: readonly number[]) => {
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = ((bytes[i] ?? 0) << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0)
+    out += `${BASE64[(n >> 18) & 63]}${BASE64[(n >> 12) & 63]}${i + 1 < bytes.length ? BASE64[(n >> 6) & 63] : '='}${i + 2 < bytes.length ? BASE64[n & 63] : '='}`
+  }
+  return out
+}
+const utf8 = (text: string) => {
+  const out: number[] = []
+  for (const char of text) {
+    const c = char.codePointAt(0) ?? 0
+    if (c < 0x80) out.push(c)
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63))
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+  }
+  return out
+}
+// What powershell -EncodedCommand reads: the script as UTF-16, little end first.
+const utf16le = (text: string) => {
+  const out: number[] = []
+  for (let i = 0; i < text.length; i++) out.push(text.charCodeAt(i) & 255, text.charCodeAt(i) >> 8)
+  return out
+}
+const xmlText = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+export const toastScript = (title: string, heading: string, body: string, url: string, tag: string, app: string) => {
+  const xml =
+    `<toast activationType="protocol" launch="${xmlText(url)}"><visual><binding template="ToastGeneric">` +
+    `<text>${xmlText(title)}</text><text>${xmlText(heading)}</text><text>${xmlText(body)}</text>` +
+    '</binding></visual><audio src="ms-winsoundevent:Notification.Default"/></toast>'
+  return TOAST_PS.replace('{XML}', base64(utf8(xml)))
+    .replace('{TAG}', tag.replace(/[^\w-]/g, '').slice(0, 64))
+    .replace('{APP}', app)
+}
+export const encodedCommand = (script: string) => base64(utf16le(script))
+
+const windowsNotice = async ($: Engine, title: string, heading: string, body: string, url: string, tag: string) => {
+  const shortcut = 'Microsoft/Windows/Start Menu/Programs/Visual Studio Code/Visual Studio Code.lnk'
+  let app = POWERSHELL_APP
+  for (const root of [await $.env.get('APPDATA'), await $.env.get('ProgramData')]) {
+    if (root !== undefined && root !== '' && (await $.fs.exists(`${root}/${shortcut}`))) app = VS_CODE_APP
+  }
+  const powershell = `${(await $.env.get('SystemRoot')) ?? 'C:/Windows'}/System32/WindowsPowerShell/v1.0/powershell.exe`
+  await $.process.run([powershell, '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand(toastScript(title, heading, body, url, tag, app))])
+}
+
 const clip = (text: string, n: number) => {
   const one = text.replace(/\s+/g, ' ').trim()
   return one.length > n ? `${one.slice(0, n - 1)}…` : one
@@ -731,13 +794,17 @@ const openHit = async ($: Engine, hit: SearchHit) => {
 
 const mentions = (hit: SearchHit) => (hit.hits === 0 ? 'in its name' : `said ${hit.hits === 1 ? 'once' : `${hit.hits} times`}`)
 
-// A macOS notification; clicking it jumps to the tab.
+// A macOS or Windows notification; clicking it jumps to the tab.
 const notify = async ($: Engine, heading: string, message: string) => {
-  if (me === undefined || isWindows) return // no notices on Windows yet: the side bar still shows it
+  if (me === undefined) return
   const key = `${me.id}:${me.state}:${me.since}`
   if (key === notified) return
   notified = key
   const name = me.title || 'Claude'
+  if (isWindows) {
+    await windowsNotice($, name, heading, clip(message || heading, 180), sessionUrl(me.id), me.id).catch(() => undefined)
+    return
+  }
   const body = `​${clip(message || heading, 180)}`
   const sound = me.state === 'needs' ? 'Ping' : me.state === 'step' ? 'Glass' : 'Purr'
   try {

@@ -69,10 +69,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\api.log" -ErrorAction SilentlyContinue; throw 'end-to-end checks failed' }
           Get-ChildItem "$env:USERPROFILE\.claude\projects" | Select-Object Name
 
-      - name: Open VS Code with the side bar showing, and take a screenshot
+      - name: Open VS Code with the side bar showing and a chat running a long job in it, check what a reload would stop, and take a screenshot
+        if: always()
         shell: powershell
         run: |
           $env:PANEL_REPORT = "$env:RUNNER_TEMP\panel.txt"
+          $env:TEST_CLAUDE = $env:CLAUDE
+          $env:TEST_API = 'http://127.0.0.1:48765'
+          $env:TEST_PROJECT = "$env:USERPROFILE\Projects\shop portal"
+          Start-Process notepad.exe -WindowStyle Minimized   # something for Open apps to show
           $code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
           Start-Process $code -ArgumentList "--extensionDevelopmentPath=`"$env:GITHUB_WORKSPACE\tests\e2e\open-panel`"", "`"$env:USERPROFILE\Projects\shop portal`""
           Start-Sleep -Seconds 40
@@ -88,7 +93,9 @@ jobs:
             Start-Sleep -Seconds 1
             [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
           }
-          Start-Sleep -Seconds 15
+          node "$env:GITHUB_WORKSPACE\tests\e2e\check.js" reload "$env:SIDEBAR"
+          $reloadFailed = $LASTEXITCODE -ne 0
+          Start-Sleep -Seconds 5
           $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $shot = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
           [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
@@ -96,8 +103,10 @@ jobs:
           $shot.Save("$env:RUNNER_TEMP\out\sidebar-on-windows.png")
           Get-Content $env:PANEL_REPORT -ErrorAction SilentlyContinue
           Copy-Item $env:PANEL_REPORT "$env:RUNNER_TEMP\out\" -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\api.log" "$env:RUNNER_TEMP\out\" -ErrorAction SilentlyContinue
           Get-ChildItem "$env:APPDATA\Code\logs" -Recurse -Filter 'exthost.log' | ForEach-Object { Copy-Item $_.FullName "$env:RUNNER_TEMP\out\exthost-$($_.Directory.Parent.Name).log" }
           Get-Process Code -ErrorAction SilentlyContinue | Stop-Process -Force
+          if ($reloadFailed) { Get-Content "$env:RUNNER_TEMP\api.log" -Tail 40 -ErrorAction SilentlyContinue; throw 'what a reload would stop: checks failed' }
 
       - uses: actions/upload-artifact@v4
         if: always()

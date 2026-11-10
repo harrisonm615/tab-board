@@ -2,7 +2,7 @@
   "name": "progress-sidebar",
   "displayName": "Tabs & Progress",
   "publisher": "hcmnj",
-  "version": "0.4.25",
+  "version": "0.4.26",
   "description": "Every Claude tab and long job in one list in the VS Code side bar, the same across all chats.",
   "engines": {
     "vscode": "^1.94.0"

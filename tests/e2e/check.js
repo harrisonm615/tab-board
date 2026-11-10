@@ -1,6 +1,7 @@
 // End to end, on a real Mac or PC: a real Claude Code session with the tab-board plugin, talking to mock-api.js, then the side bar's own code
 // reading what that session left. Run in a throwaway home folder: it writes there.
 //   node check.js <side bar folder> <claude program> <project folder> <API address>
+//   node check.js reload <side bar folder>     once VS Code is running a chat with a long job (Windows): what a reload would stop
 // It prints one line per check and exits 1 if any failed.
 const childProcess = require('child_process')
 const fs = require('fs')
@@ -9,6 +10,8 @@ const path = require('path')
 
 const [sideBar, claude, project, api] = process.argv.slice(2)
 const isWindows = process.platform === 'win32'
+const repo = path.resolve(__dirname, '..', '..')
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 const home = os.homedir()
 const results = []
 const check = (name, ok, detail = '') => {
@@ -96,18 +99,104 @@ async function main() {
   const after = sorted && sorted.tabs && question && sorted.tabs.find(tab => tab.id === question.id)
   check('the sorted list uses that answer', Boolean(after && after.why === 'Test verdict'), after ? JSON.stringify(after).slice(0, 200) : 'missing')
 
-  // 7. The meters
+  // 7. The meters. On Windows the network and GPU come from a helper that ends by itself once nobody asks, here after 8 seconds
+  if (isWindows) process.env.BAR_METER_IDLE_S = '8'
   const { Gauges } = require(path.join(sideBar, 'gauges.js'))
-  const gauges = new Gauges()
+  const gauges = new Gauges({ python: [core.PYTHON, ...core.PYTHON_ARGS] })
   await gauges.read()
-  await new Promise(resolve => setTimeout(resolve, 1200))
-  const reading = await gauges.read()
+  await wait(1200)
+  let reading = await gauges.read()
   const memoryOk = reading.memory && reading.memory.totalGB > 0 && reading.memory.percent > 0
   check('the meters read CPU and memory', typeof reading.cpu === 'number' && memoryOk, `cpu ${reading.cpu && reading.cpu.toFixed(0)}%, memory ${memoryOk && reading.memory.percent.toFixed(0)}%`)
-  if (isWindows) check('on Windows the meters skip the Mac-only network line', reading.link === undefined && reading.os === 'windows', JSON.stringify(reading.disks))
+  if (isWindows) await windowsChecks(core, gauges, reading, env, question)
 }
 
-main()
+// What Windows gets beyond the basics: the network line and GPU, Open apps with its ×, notices, and (with `reload`) what a reload would stop
+async function windowsChecks(core, gauges, first, env, question) {
+  // Something to see on the network line: a real download between two looks
+  const started = Date.now()
+  const download = await fetch('https://codeload.github.com/harrisonm615/tab-board/zip/refs/heads/main').then(r => r.arrayBuffer()).catch(() => new ArrayBuffer(0))
+  await wait(Math.max(0, 5000 - (Date.now() - started)))
+  const reading = await gauges.read()
+  const link = reading.link || {}
+  check('the network line knows the way out', ['Wired', 'Wi-Fi', 'Network'].includes(link.kind), JSON.stringify(link))
+  check('the network line counts a download', Boolean(reading.net && reading.net.down > 0), `${(download.byteLength / 1e6).toFixed(1)} MB fetched, ${JSON.stringify(reading.net)}`)
+  const gpuCounters = childProcess.spawnSync('typeperf', ['-qx', 'GPU Engine'], { encoding: 'utf8', windowsHide: true }).stdout || ''
+  const hasGpu = /Utilization Percentage/.test(gpuCounters)
+  check(hasGpu ? 'the GPU meter reads Windows\' GPU counters' : 'with no GPU counters on this PC, the GPU meter stays off', hasGpu ? typeof reading.gpu === 'number' : reading.gpu === undefined, `gpu ${reading.gpu}; counters ${hasGpu ? 'present' : 'absent'}`)
+  const helper = gauges.helper && gauges.helper.child
+  await wait(18000)
+  check('the meters helper ends by itself once nobody asks', Boolean(helper) && helper.exitCode !== null && gauges.helper.child === undefined, helper ? `exit ${helper.exitCode}` : 'never started')
+
+  // Open apps: a real app, then its × button
+  const notepad = childProcess.spawn('notepad.exe', [], { detached: true, stdio: 'ignore' })
+  notepad.unref()
+  let apps
+  let pad
+  for (let i = 0; i < 20 && !pad; i++) {
+    await wait(1000)
+    apps = await core.collect([])
+    pad = apps && apps.apps && apps.apps.rows.find(row => /notepad/i.test(row.id))
+  }
+  const rows = (apps && apps.apps && apps.apps.rows) || []
+  check('Open apps lists an app that was just opened', Boolean(pad), rows.map(row => `${row.name} (${row.text})`).join(', ') || JSON.stringify(apps && apps.apps))
+  check("Open apps doesn't offer VS Code or File Explorer", !rows.some(row => /microsoft vs code|\\explorer\.exe$/i.test(row.id)), rows.map(row => row.id).join(', '))
+  if (pad) {
+    await core.collect(['quit', pad.id])
+    let closed = false
+    for (let i = 0; i < 20 && !closed; i++) {
+      await wait(500)
+      closed = !/notepad\.exe/i.test(childProcess.spawnSync('tasklist', ['/fi', 'imagename eq notepad.exe', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true }).stdout || '')
+    }
+    check('its × closes it', closed)
+  }
+
+  // Notices: the side bar's and the plugin's are the same script, and Windows shows it
+  const python = [core.PYTHON, ...core.PYTHON_ARGS]
+  const winsys = code => childProcess.spawnSync(python[0], [...python.slice(1), '-I', '-c', `import sys; sys.path.insert(0, sys.argv[1]); import winsys\n${code}`, sideBar], { encoding: 'utf8', windowsHide: true })
+  const theirs = /const TOAST_PS = String\.raw`([\s\S]*?)`/.exec(fs.readFileSync(path.join(repo, 'hooks', 'register.tsx'), 'utf8'))
+  const ours = winsys('import json; print(json.dumps(winsys.TOAST_PS))')
+  check("the plugin's notice is the same script as the side bar's", Boolean(theirs) && JSON.parse(ours.stdout || '""') === theirs[1], ours.stderr.slice(0, 200))
+  const app = winsys('print(winsys.notice_app())').stdout.trim()
+  const shown = winsys("print(winsys.notice('Shop sign', 'Your move', 'Red or blue? Café sign', 'vscode://anthropic.claude-code/open?session=test', 'tab-test'))")
+  const inHistory = tag => {
+    const script = `$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; @([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('${app}') | Where-Object { $_.Tag -eq '${tag}' }).Count`
+    return childProcess.spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8', windowsHide: true }).stdout.trim()
+  }
+  check('a side bar notice shows in Windows notifications', shown.stdout.trim() === 'True' && inHistory('tab-test') === '1', `${app}: ${shown.stdout.trim()} ${shown.stderr.slice(0, 200)} history ${inHistory('tab-test')}`)
+
+  // The plugin's own notice, from a real chat that asks with Claude's question tool. A headless chat can't be answered, so it's stopped after a while
+  childProcess.spawnSync(claude, ['-p', 'Ask with a tool'], { cwd: project, env, encoding: 'utf8', timeout: 60_000, windowsHide: true })
+  const boardDir = path.join(os.homedir(), '.claude', 'tab-board')
+  const asked = fs.readdirSync(boardDir).filter(name => /^[0-9a-f-]{36}\.json$/.test(name)).map(name => JSON.parse(fs.readFileSync(path.join(boardDir, name), 'utf8'))).find(one => one.title === 'Ask with a tool')
+  check("the plugin's notice shows when a chat asks you something", Boolean(asked) && inHistory(asked.id) === '1', asked ? `${asked.state}: ${asked.detail}; history ${inHistory(asked.id)}` : 'no record')
+}
+
+// Run once VS Code is open with a chat running a long job inside it (see open-panel): the side bar has to name that chat as what a reload would stop
+async function reloadChecks(folder) {
+  const core = require(path.join(folder, 'core.js'))
+  let jobs
+  let row
+  for (let i = 0; i < 40 && !row; i++) {
+    jobs = await core.collect([])
+    row = jobs && Array.isArray(jobs.reload) && jobs.reload.find(job => /node/.test(job.what))
+    if (!row) await wait(3000)
+  }
+  check('on Windows the side bar can tell what a reload would stop', Boolean(jobs && Array.isArray(jobs.reload)), JSON.stringify(jobs && jobs.reload))
+  check('it names the chat running a long job, and the job', Boolean(row && row.title === 'Run a long job'), JSON.stringify(row || (jobs && jobs.reload)))
+  if (!row) {
+    // What Windows says is running under Claude, to see why not
+    const dump = "import sys, json; sys.path.insert(0, sys.argv[1]); import winsys\nt = winsys.processes()\nfor pid, p in t.items():\n    if 'claude' in p['name'].lower() or 'bash' in p['name'].lower() or 'node' in p['name'].lower():\n        print(pid, p['parent'], p['secs'], round(p['cpu'], 1), p['path'], '|', p['cmd'][:300])"
+    console.log(childProcess.spawnSync(core.PYTHON, [...core.PYTHON_ARGS, '-I', '-c', dump, folder], { encoding: 'utf8', windowsHide: true }).stdout)
+    try {
+      console.log('sessions:', fs.readdirSync(path.join(os.homedir(), '.claude', 'sessions')).join(', '))
+    } catch {
+      console.log('no ~/.claude/sessions folder')
+    }
+  }
+}
+
+;(sideBar === 'reload' ? reloadChecks(claude) : main())
   .catch(error => check('the checks ran to the end', false, error.stack))
   .finally(() => {
     const failed = results.filter(ok => !ok).length

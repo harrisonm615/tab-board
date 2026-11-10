@@ -1,8 +1,9 @@
-// What the Mac is doing right now: CPU, GPU, memory, network and free disk space.
+// What the Mac or PC is doing right now: CPU, GPU, memory, network and free disk space.
 // Small system tools only, with no permission prompts, and only while the panel is showing. No battery: it's in the menu bar right above.
-const { execFile } = require('child_process')
+const { execFile, spawn } = require('child_process')
 const fs = require('fs')
 const os = require('os')
+const path = require('path')
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -132,9 +133,88 @@ function windowsDisks(statfs = fs.statfsSync) {
   }
 }
 
+// Windows: one small Python helper (winsys.py meters) answers each look with the network's byte counts, the way out and the GPU.
+// It's kept between looks because the GPU is measured between two of them, and starting Python every five seconds costs more.
+// It ends by itself a minute after the last look, so a hidden panel, or a copy of this file that was swapped out, leaves nothing running.
+const ASK_MS = 4_000
+
+class WindowsHelper {
+  constructor(python) {
+    this.python = python
+    this.child = undefined
+    this.waiting = []
+    this.text = ''
+  }
+
+  ask() {
+    if (!this.python) return Promise.resolve(undefined)
+    if (!this.child) this.start()
+    return new Promise(resolve => {
+      // A late answer still belongs to this question, so a slow one can't be handed to the next look.
+      const turn = { resolve, done: false }
+      turn.timer = setTimeout(() => this.finish(turn, undefined), ASK_MS)
+      this.waiting.push(turn)
+      try {
+        this.child.stdin.write('\n')
+      } catch {
+        this.finish(turn, undefined)
+      }
+    })
+  }
+
+  finish(turn, value) {
+    if (turn.done) return
+    turn.done = true
+    clearTimeout(turn.timer)
+    turn.resolve(value)
+  }
+
+  start() {
+    const [program, ...args] = this.python
+    const child = spawn(program, [...args, '-I', path.join(__dirname, 'winsys.py'), 'meters'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+    const gone = () => {
+      if (this.child !== child) return
+      this.child = undefined
+      this.text = ''
+      for (const turn of this.waiting.splice(0)) this.finish(turn, undefined)
+    }
+    child.on('error', gone)
+    child.on('exit', gone)
+    child.stdin.on('error', () => {})
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', chunk => {
+      this.text += chunk
+      let end
+      while ((end = this.text.indexOf('\n')) >= 0) {
+        const line = this.text.slice(0, end)
+        this.text = this.text.slice(end + 1)
+        const turn = this.waiting.shift()
+        let value
+        try {
+          value = JSON.parse(line)
+        } catch {}
+        if (turn) this.finish(turn, value)
+      }
+    })
+    this.child = child
+  }
+
+  stop() {
+    const child = this.child
+    this.child = undefined
+    if (child) child.kill()
+  }
+}
+
 class Gauges {
-  constructor() {
+  // python: [program, ...arguments], the same Python the side bar's helpers use. Only Windows needs it.
+  constructor({ python } = {}) {
     this.looks = 0
+    this.helper = IS_WINDOWS ? new WindowsHelper(python) : undefined
+  }
+
+  stop() {
+    if (this.helper) this.helper.stop()
   }
 
   async read() {
@@ -164,16 +244,28 @@ class Gauges {
     return { ...out, disks: this.disks, link: this.link }
   }
 
-  // CPU, memory and the system drive. The Mac's other meters have no Windows tool that needs no setup, so they're left off rather than shown wrong.
-  readWindows() {
+  // CPU, memory and the system drive from Node itself; the network, the way out and the GPU from the helper. No speed test: Windows has none of its own.
+  async readWindows() {
     const now = Date.now()
     const cpuNow = cpuTimes()
+    const answer = (this.helper && (await this.helper.ask())) || {}
+    const netNow = answer.net && answer.net.down >= 0 ? answer.net : undefined
+    const seconds = this.before ? (now - this.before.at) / 1000 : 0
     const fresh = this.before && now - this.before.at <= STALE_MS
-    const out = { at: now, os: 'windows', load: 0, cpu: fresh ? cpuPercent(this.before.cpu, cpuNow) : undefined, memory: windowsMemory() }
-    this.before = { at: now, cpu: cpuNow }
+    const out = {
+      at: now,
+      os: 'windows',
+      load: 0,
+      cpu: fresh ? cpuPercent(this.before.cpu, cpuNow) : undefined,
+      gpu: typeof answer.gpu === 'number' ? answer.gpu : undefined,
+      memory: windowsMemory(),
+      net: fresh ? netRates(this.before.net, netNow, seconds) : undefined,
+    }
+    this.before = { at: now, cpu: cpuNow, net: netNow }
     if (this.looks % SLOW_EVERY === 0) this.disks = windowsDisks()
+    if (answer.link) this.link = answer.link
     this.looks += 1
-    return { ...out, disks: this.disks }
+    return { ...out, disks: this.disks, link: this.link }
   }
 
   async readSlow() {
