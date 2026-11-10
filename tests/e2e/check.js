@@ -171,11 +171,29 @@ async function windowsChecks(core, gauges, first, env, question) {
   const bare = path.join(os.tmpdir(), 'home-without-side-bar')
   fs.mkdirSync(bare, { recursive: true })
   const alone = { ...env, USERPROFILE: bare, HOME: bare, CLAUDE_CONFIG_DIR: path.join(os.homedir(), '.claude') }
-  const slow = childProcess.spawnSync(claude, ['-p', 'Take your time'], { cwd: project, env: alone, encoding: 'utf8', timeout: 180_000, windowsHide: true })
+  // A headless chat ends the moment its answer is out, before the plugin's notice; a tab stays open. So this one is kept open the way a
+  // tab is, by taking its messages as a stream, and is only closed once the notice has had time to go out
+  const chat = childProcess.spawn(claude, ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], { cwd: project, env: alone, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+  let said = ''
+  chat.stdout.setEncoding('utf8')
+  chat.stdout.on('data', chunk => (said += chunk))
+  chat.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Take your time' } })}\n`)
+  for (let i = 0; i < 120 && !said.includes('"type":"result"'); i++) await wait(1000)
   const bareBoard = path.join(bare, '.claude', 'tab-board')
-  const records = fs.existsSync(bareBoard) ? fs.readdirSync(bareBoard).filter(name => /^[0-9a-f-]{36}\.json$/.test(name)) : []
-  const asked = records.map(name => JSON.parse(fs.readFileSync(path.join(bareBoard, name), 'utf8'))).find(one => one.title === 'Take your time')
-  check("the plugin's notice shows when a long chat ends by asking you something", Boolean(asked) && inHistory(asked.id) === '1', asked ? `${asked.state}: ${asked.detail}; history ${inHistory(asked.id)}` : `no record: ${(slow.stdout || slow.stderr || '').slice(0, 200)}`)
+  const findAsked = () => {
+    const records = fs.existsSync(bareBoard) ? fs.readdirSync(bareBoard).filter(name => /^[0-9a-f-]{36}\.json$/.test(name)) : []
+    return records.map(name => JSON.parse(fs.readFileSync(path.join(bareBoard, name), 'utf8'))).find(one => one.title === 'Take your time')
+  }
+  let asked
+  let shownCount = '0'
+  for (let i = 0; i < 30 && shownCount !== '1'; i++) {
+    await wait(1000)
+    asked = findAsked()
+    if (asked) shownCount = inHistory(asked.id)
+  }
+  chat.stdin.end()
+  setTimeout(() => chat.kill(), 10_000).unref()
+  check("the plugin's notice shows when a long chat ends by asking you something", shownCount === '1', asked ? `${asked.state}: ${asked.detail}; history ${shownCount}` : `no record: ${said.slice(-300)}`)
 }
 
 // Run once VS Code is open with a chat running a long job inside it (see open-panel): the side bar has to name that chat as what a reload would stop
